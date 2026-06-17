@@ -1,0 +1,16 @@
+# Build artifacts
+*.o
+*.obj
+*.log
+lvm_reader
+lvm_reader.exe
+lvm_viewer_gui
+lvm_viewer_gui.exe
+tests/run_tests
+tests/run_tests.exe
+
+# Test scratch files
+tests/_tmp_*
+
+# Local test output
+*.csv
