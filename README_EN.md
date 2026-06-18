@@ -19,7 +19,7 @@ The parser is a faithful C++ port of the Python LVM Signal Viewer, and the FFT m
 
 ## GUI Viewer
 
-A self-contained desktop app drawn with the Win32 API + GDI (no Qt, no DLLs). Latest version: **v0.3.2**.
+A self-contained desktop app drawn with the Win32 API + GDI (no Qt, no DLLs). Latest version: **v0.4.0**.
 
 ### Start Screen
 
@@ -29,6 +29,7 @@ On launch (with no file) a welcome window shows the app name, a short how-to, an
 
 - **Main menu** (File / View / Measurements / Lines / Help) alongside the toolbar, a modern Segoe UI look, and a status bar.
 - **Dark theme** — toggle with `T` or via the View menu. Full dark mode including toolbar, menu bar, panel, and settings window.
+- **Language** — switch between English and Russian via the View menu.
 - **Open file** — open a `.lvm`/`.txt` via the file dialog (or pass a path on the command line / drag a file onto the exe).
 - Multi-channel plot with a colored **interactive legend** — click a legend item to toggle the channel, `Ctrl+Click` to solo (show only that channel).
 - **Channels** panel — checkboxes to show/hide each channel.
