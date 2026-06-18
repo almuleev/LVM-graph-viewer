@@ -17,6 +17,9 @@ the bundled sample files (verified on a 1 GB / 6.8 M-sample file too).
 
 A self-contained desktop app drawn with the Win32 API + GDI (no Qt, no DLLs):
 
+- **Start screen** — on launch (with no file) a welcome window shows the app
+  name, a short how-to, and buttons to open a file, open the point settings, or
+  view the shortcuts.
 - **Main menu** (Файл / Вид / Измерения / Линии / Справка) alongside the
   toolbar, a modern Segoe UI look, and a status bar.
 - **Открыть файл** — open a `.lvm`/`.txt` via the file dialog (or pass a path on
@@ -29,27 +32,29 @@ A self-contained desktop app drawn with the Win32 API + GDI (no Qt, no DLLs):
   or CSV of the **visible segment** (the time window in Time mode, or the visible
   spectrum band in Hz mode). Default names reflect the mode
   (`…_plot.png` / `…_spectrum.png`, `…_segment.csv` / `…_spectrum.csv`).
-- **▶ Воспроизв. / ⏸ Пауза** — play back the time signal: a red playhead sweeps
-  across the plot and the window auto-scrolls to follow it.
+- **▶ Воспроизв. / ⏸ Пауза** — play back the time signal in **real time**
+  (1 s of signal per 1 s of wall clock); a red playhead sweeps across the plot
+  and, once it passes the middle, the window scrolls smoothly to follow it.
 - **Измерение** — measurement tool. Click points on the plot to drop markers;
-  the segment read-out (Δx, Δy, 1/Δt …) is drawn right on the chart and in the
-  status bar. The **Измерения** menu is a settings panel: toggle exactly which
-  read-outs appear next to each marker (number, X, Y, Δx, Δy, 1/Δt, distance),
-  and turn **«Примагничивать к точкам данных»** on/off to snap markers to the
-  nearest real sample so coordinates are exact. Right-click (or `Delete`) clears
-  the points.
+  the read-outs are drawn right on the chart and in the status bar. A dedicated
+  **«Настройки точек измерения»** panel (toolbar button or *Измерения →
+  Настройки точек…*) has checkboxes to choose what is shown — point number, X,
+  Y, distance along X (Δx) and/or Y (Δy), 1/Δt, straight-line distance d — to
+  **snap markers to the graph**, and a button to **change the marker colour**.
+  Right-click (or `Delete`) clears the points.
 - **Линии** — drop **vertical** and **horizontal** reference lines on the plot.
   Pick *Добавить вертикальную/горизонтальную линию*, then click where it goes
   (vertical lines snap to a sample when snapping is on); *Очистить линии* removes
   them. Lines are remembered per view (Time vs Hz).
-- **Сглаживание** slider — moving-average filter (centered, 0–80 samples) that
-  changes the rendered values to tame a noisy signal.
+- **Фикс. масштаб Y** — by default the vertical scale auto-fits the visible
+  data; this toggle freezes it at the current range so the height stops
+  readjusting (handy during playback / panning).
 - **Визуальное сглаживание (сплайн)** — a *purely visual* Catmull-Rom curve
   drawn between samples. It smooths the **line** without moving the underlying
   data points (measurements/snapping still hit the true samples); when zoomed in
   the real samples are shown as dots so the distinction is clear.
-- **Увеличить / Уменьшить / Сбросить вид** plus mouse-wheel zoom and
-  left-drag panning. Zoom/pan work on **both** axes — time in Time mode and the
+- **Сбросить вид** plus mouse-wheel zoom (under the cursor) and left-drag
+  panning. Zoom/pan work on **both** axes — time in Time mode and the
   **frequency axis in Hz mode** — so you can drill into a narrow band. A status
   bar shows the current window and sample count.
 
