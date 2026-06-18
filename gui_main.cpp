@@ -103,6 +103,7 @@ enum {
 
     IDM_UNDO = 1400,
     IDM_REDO,
+    IDM_THEME = 1500,
 
     IDC_CHAN_BASE = 2000,
 };
@@ -120,25 +121,67 @@ const COLORREF kPalette[] = {
 };
 COLORREF channel_color(std::size_t i) { return kPalette[i % (sizeof(kPalette) / sizeof(kPalette[0]))]; }
 
-// Modern light-theme color palette
-const COLORREF kBgMain       = RGB(250, 252, 255);
-const COLORREF kBgToolbar    = RGB(235, 240, 246);
-const COLORREF kBgPanel      = RGB(242, 245, 250);
-const COLORREF kBgPlot       = RGB(255, 255, 255);
-const COLORREF kBgStatus     = RGB(245, 247, 250);
-const COLORREF kGrid         = RGB(230, 235, 240);
-const COLORREF kFrame        = RGB(180, 190, 200);
-const COLORREF kAxisText     = RGB(80, 90, 100);
-const COLORREF kTextPrimary  = RGB(30, 40, 50);
-const COLORREF kTextSecondary= RGB(100, 110, 120);
-const COLORREF kAccent       = RGB(0, 120, 212);
-const COLORREF kAccentHover  = RGB(0, 100, 180);
-const COLORREF kSeparator    = RGB(210, 218, 228);
-const COLORREF kBtnBg        = RGB(250, 251, 253);
-const COLORREF kBtnBorder    = RGB(200, 208, 218);
-const COLORREF kBtnHover     = RGB(230, 235, 242);
-const COLORREF kBtnActive    = RGB(0, 120, 212);
-const COLORREF kPlayhead     = RGB(220, 40, 40);
+struct Theme {
+    COLORREF bg_main, bg_toolbar, bg_panel, bg_plot, bg_status;
+    COLORREF grid, frame, axis_text;
+    COLORREF text_primary, text_secondary;
+    COLORREF accent, accent_hover, separator;
+    COLORREF btn_bg, btn_border, btn_hover, btn_active;
+    COLORREF playhead;
+    COLORREF marker_color;
+};
+
+static const Theme kLightTheme = {
+    RGB(250, 252, 255),   // bg_main
+    RGB(235, 240, 246),   // bg_toolbar
+    RGB(242, 245, 250),   // bg_panel
+    RGB(255, 255, 255),   // bg_plot
+    RGB(245, 247, 250),   // bg_status
+    RGB(230, 235, 240),   // grid
+    RGB(180, 190, 200),   // frame
+    RGB(80, 90, 100),     // axis_text
+    RGB(30, 40, 50),      // text_primary
+    RGB(100, 110, 120),   // text_secondary
+    RGB(0, 120, 212),     // accent
+    RGB(0, 100, 180),     // accent_hover
+    RGB(210, 218, 228),   // separator
+    RGB(250, 251, 253),   // btn_bg
+    RGB(200, 208, 218),   // btn_border
+    RGB(230, 235, 242),   // btn_hover
+    RGB(0, 120, 212),     // btn_active
+    RGB(220, 40, 40),     // playhead
+    RGB(200, 0, 0),       // marker_color
+};
+
+static const Theme kDarkTheme = {
+    RGB(30, 32, 38),      // bg_main
+    RGB(45, 48, 55),      // bg_toolbar
+    RGB(38, 40, 48),      // bg_panel
+    RGB(25, 28, 35),      // bg_plot
+    RGB(35, 38, 45),      // bg_status
+    RGB(55, 60, 70),      // grid
+    RGB(80, 85, 95),      // frame
+    RGB(180, 185, 190),   // axis_text
+    RGB(220, 225, 230),   // text_primary
+    RGB(140, 145, 150),   // text_secondary
+    RGB(0, 150, 255),     // accent
+    RGB(30, 130, 235),    // accent_hover
+    RGB(60, 65, 75),      // separator
+    RGB(55, 58, 65),      // btn_bg
+    RGB(75, 80, 90),      // btn_border
+    RGB(70, 75, 85),      // btn_hover
+    RGB(0, 150, 255),     // btn_active
+    RGB(255, 60, 60),     // playhead
+    RGB(255, 80, 80),     // marker_color
+};
+
+const Theme* g_theme = &kLightTheme;
+HBRUSH g_panel_brush = nullptr;
+
+void update_theme_brushes() {
+    if (g_panel_brush) DeleteObject(g_panel_brush);
+    g_panel_brush = CreateSolidBrush(g_theme->bg_panel);
+}
 
 // Which read-outs to draw next to measurement markers (toggled from the
 // "Измерения → Отображать у точек" menu).
@@ -185,7 +228,7 @@ struct App {
     bool measure_mode = false;
     bool snap_to_data = true;       // snap markers to the nearest real sample
     PointDisplay pdisp;             // which read-outs to draw at markers
-    COLORREF marker_color = RGB(200, 0, 0);
+    COLORREF marker_color = g_theme->marker_color;
     std::vector<std::pair<double, double>> points;  // measurement points (data coords)
 
     std::vector<GuideLine> guides;  // vertical / horizontal reference lines
@@ -781,10 +824,10 @@ void draw_text(HDC dc, int x, int y, const wchar_t* s, UINT align) {
 
 void draw_axes(HDC dc, const RECT& p, double x0, double x1, double y0, double y1,
                const wchar_t* xlabel) {
-    HPEN grid = CreatePen(PS_SOLID, 1, kGrid);
-    HPEN frame = CreatePen(PS_SOLID, 1, kFrame);
+    HPEN grid = CreatePen(PS_SOLID, 1, g_theme->grid);
+    HPEN frame = CreatePen(PS_SOLID, 1, g_theme->frame);
     HGDIOBJ old = SelectObject(dc, grid);
-    SetTextColor(dc, kAxisText);
+    SetTextColor(dc, g_theme->axis_text);
     HFONT font = g.axis_font ? g.axis_font : g.ui_font;
     HGDIOBJ old_font = SelectObject(dc, font);
     SetBkMode(dc, TRANSPARENT);
@@ -848,9 +891,9 @@ void draw_legend(HDC dc, const RECT& p) {
     int box_x = p.right - box_w - 14;
     int box_y = p.bottom - box_h - 14;
 
-    // Draw white rounded background with border
-    HBRUSH bg = CreateSolidBrush(RGB(255, 255, 255));
-    HPEN border = CreatePen(PS_SOLID, 1, RGB(200, 210, 220));
+    // Draw themed rounded background with border
+    HBRUSH bg = CreateSolidBrush(g_theme->bg_plot);
+    HPEN border = CreatePen(PS_SOLID, 1, g_theme->frame);
     HGDIOBJ old_brush = SelectObject(dc, bg);
     HGDIOBJ old_pen = SelectObject(dc, border);
     RoundRect(dc, box_x, box_y, box_x + box_w, box_y + box_h, 4, 4);
@@ -870,7 +913,7 @@ void draw_legend(HDC dc, const RECT& p) {
         SelectObject(dc, old_b);
         DeleteObject(cb);
 
-        SetTextColor(dc, kTextPrimary);
+        SetTextColor(dc, g_theme->text_primary);
         SetTextAlign(dc, TA_LEFT | TA_TOP);
         std::wstring nm = to_w(g.ds.names[i]);
         TextOutW(dc, box_x + pad + 18, y, nm.c_str(), static_cast<int>(nm.size()));
@@ -912,7 +955,7 @@ void draw_guides(HDC dc) {
             SetTextAlign(dc, TA_LEFT | TA_TOP);
             SIZE ts;
             GetTextExtentPoint32W(dc, b, lstrlenW(b), &ts);
-            HBRUSH wb = CreateSolidBrush(RGB(255, 255, 255));
+            HBRUSH wb = CreateSolidBrush(g_theme->bg_plot);
             RECT br = {X + 3, p.top + 2, X + 3 + ts.cx + 2, p.top + 2 + ts.cy};
             FillRect(dc, &br, wb);
             DeleteObject(wb);
@@ -926,7 +969,7 @@ void draw_guides(HDC dc) {
             SetTextAlign(dc, TA_LEFT | TA_BOTTOM);
             SIZE ts;
             GetTextExtentPoint32W(dc, b, lstrlenW(b), &ts);
-            HBRUSH wb = CreateSolidBrush(RGB(255, 255, 255));
+            HBRUSH wb = CreateSolidBrush(g_theme->bg_plot);
             RECT br = {p.left + 4, Y - 2 - ts.cy, p.left + 4 + ts.cx + 2, Y - 2};
             FillRect(dc, &br, wb);
             DeleteObject(wb);
@@ -977,8 +1020,8 @@ void draw_markers(HDC dc) {
         GetTextExtentPoint32W(dc, txt, tlen, &ts);
         int tx = X + 3;
         int ty = p.top + 4;
-        HBRUSH wb = CreateSolidBrush(RGB(255, 255, 255));
-        HPEN bp = CreatePen(PS_SOLID, 1, RGB(200, 210, 220));
+        HBRUSH wb = CreateSolidBrush(g_theme->bg_plot);
+        HPEN bp = CreatePen(PS_SOLID, 1, g_theme->frame);
         HGDIOBJ oldp = SelectObject(dc, bp);
         HGDIOBJ oldb = SelectObject(dc, wb);
         RoundRect(dc, tx - 2, ty - 1, tx + ts.cx + 4, ty + ts.cy + 2, 3, 3);
@@ -1042,8 +1085,8 @@ void draw_measure(HDC dc) {
             SetTextAlign(dc, TA_LEFT | TA_BOTTOM);
             SIZE ts;
             GetTextExtentPoint32W(dc, lab.c_str(), static_cast<int>(lab.size()), &ts);
-            HBRUSH wb = CreateSolidBrush(RGB(255, 255, 255));
-            HPEN bp = CreatePen(PS_SOLID, 1, RGB(220, 220, 220));
+            HBRUSH wb = CreateSolidBrush(g_theme->bg_plot);
+            HPEN bp = CreatePen(PS_SOLID, 1, g_theme->frame);
             HGDIOBJ oldp = SelectObject(dc, bp);
             HGDIOBJ oldb = SelectObject(dc, wb);
             RoundRect(dc, X + 6, Y - 4 - ts.cy, X + 12 + ts.cx, Y + 2, 3, 3);
@@ -1074,8 +1117,8 @@ void draw_measure(HDC dc) {
                 SetTextAlign(dc, TA_CENTER | TA_BOTTOM);
                 SIZE ts;
                 GetTextExtentPoint32W(dc, dl.c_str(), static_cast<int>(dl.size()), &ts);
-                HBRUSH wb = CreateSolidBrush(RGB(255, 255, 255));
-                HPEN bp = CreatePen(PS_SOLID, 1, RGB(220, 220, 220));
+                HBRUSH wb = CreateSolidBrush(g_theme->bg_plot);
+                HPEN bp = CreatePen(PS_SOLID, 1, g_theme->frame);
                 HGDIOBJ oldp = SelectObject(dc, bp);
                 HGDIOBJ oldb = SelectObject(dc, wb);
                 RoundRect(dc, mxp - ts.cx/2 - 4, myp - 4 - ts.cy, mxp + ts.cx/2 + 6, myp + 2, 3, 3);
@@ -1226,7 +1269,7 @@ void draw_time(HDC dc, const RECT& p) {
 
     // Playhead.
     if (g.playhead_active && g.playhead >= g.win_start && g.playhead <= g.win_end) {
-        HPEN ph_pen = CreatePen(PS_SOLID, 2, kPlayhead);
+        HPEN ph_pen = CreatePen(PS_SOLID, 2, g_theme->playhead);
         HGDIOBJ old = SelectObject(dc, ph_pen);
         const int X = mapx(g.playhead);
         MoveToEx(dc, X, p.top, nullptr);
@@ -1309,7 +1352,7 @@ void draw_freq(HDC dc, const RECT& p) {
 void draw_chart(HDC dc, const RECT& p) {
     if (!has_data()) {
         SetTextAlign(dc, TA_CENTER | TA_BASELINE);
-        SetTextColor(dc, kTextSecondary);
+        SetTextColor(dc, g_theme->text_secondary);
         const wchar_t* msg = L"Откройте файл .lvm или .txt (кнопка «Открыть файл» / клавиша O)";
         TextOutW(dc, (p.left + p.right) / 2, (p.top + p.bottom) / 2, msg, lstrlenW(msg));
         g.vvalid = false;
@@ -1331,24 +1374,24 @@ void on_paint(HDC hdc) {
     HBITMAP bmp = CreateCompatibleBitmap(hdc, cw, ch);
     HGDIOBJ obmp = SelectObject(mem, bmp);
 
-    HBRUSH bg = CreateSolidBrush(kBgMain);
+    HBRUSH bg = CreateSolidBrush(g_theme->bg_main);
     FillRect(mem, &rc, bg);
     DeleteObject(bg);
 
     // Toolbar band across the top.
     RECT topbar = {0, 0, cw, kTopBar};
-    HBRUSH tbb = CreateSolidBrush(kBgToolbar);
+    HBRUSH tbb = CreateSolidBrush(g_theme->bg_toolbar);
     FillRect(mem, &topbar, tbb);
     DeleteObject(tbb);
 
     // Right-side channels panel.
     RECT panel = {cw - kRightPanel, kTopBar, cw, ch - kBottomBar};
-    HBRUSH pbg = CreateSolidBrush(kBgPanel);
+    HBRUSH pbg = CreateSolidBrush(g_theme->bg_panel);
     FillRect(mem, &panel, pbg);
     DeleteObject(pbg);
 
     // Hairline separators (under the toolbar, left of the panel, above status bar).
-    HPEN sep = CreatePen(PS_SOLID, 1, kSeparator);
+    HPEN sep = CreatePen(PS_SOLID, 1, g_theme->separator);
     HGDIOBJ oldpen = SelectObject(mem, sep);
     MoveToEx(mem, 0, kTopBar - 1, nullptr); LineTo(mem, cw, kTopBar - 1);
     MoveToEx(mem, cw - kRightPanel, kTopBar, nullptr); LineTo(mem, cw - kRightPanel, ch - kBottomBar);
@@ -1357,7 +1400,7 @@ void on_paint(HDC hdc) {
     DeleteObject(sep);
 
     // Toolbar vertical separators (single compact row)
-    HPEN vsep = CreatePen(PS_SOLID, 1, kSeparator);
+    HPEN vsep = CreatePen(PS_SOLID, 1, g_theme->separator);
     oldpen = SelectObject(mem, vsep);
     for (int sx : g.toolbar_seps) {
         MoveToEx(mem, sx, 8, nullptr); LineTo(mem, sx, 44);
@@ -1366,7 +1409,7 @@ void on_paint(HDC hdc) {
     DeleteObject(vsep);
 
     SetBkMode(mem, TRANSPARENT);
-    SetTextColor(mem, kTextPrimary);
+    SetTextColor(mem, g_theme->text_primary);
     SetTextAlign(mem, TA_LEFT | TA_TOP);
     SelectObject(mem, g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT)));
     TextOutW(mem, cw - kRightPanel + 12, kTopBar + 10, L"Каналы", 6);
@@ -1392,19 +1435,19 @@ void on_paint(HDC hdc) {
 
     // Status bar (owner-drawn)
     RECT sb = {0, ch - kBottomBar, cw, ch};
-    HBRUSH sbb = CreateSolidBrush(kBgStatus);
+    HBRUSH sbb = CreateSolidBrush(g_theme->bg_status);
     FillRect(mem, &sb, sbb);
     DeleteObject(sbb);
-    HPEN sb_top = CreatePen(PS_SOLID, 1, kSeparator);
+    HPEN sb_top = CreatePen(PS_SOLID, 1, g_theme->separator);
     oldpen = SelectObject(mem, sb_top);
     MoveToEx(mem, 0, ch - kBottomBar, nullptr); LineTo(mem, cw, ch - kBottomBar);
     SelectObject(mem, oldpen);
     DeleteObject(sb_top);
-    SetTextColor(mem, kTextSecondary);
+    SetTextColor(mem, g_theme->text_secondary);
     SetTextAlign(mem, TA_LEFT | TA_TOP);
     SelectObject(mem, g.ui_font);
     if (!g.hover_status_text.empty()) {
-        SetTextColor(mem, kAccent);
+        SetTextColor(mem, g_theme->accent);
         TextOutW(mem, 12, ch - kBottomBar + 5, g.hover_status_text.c_str(), static_cast<int>(g.hover_status_text.size()));
     } else if (!g.status_text.empty()) {
         TextOutW(mem, 12, ch - kBottomBar + 5, g.status_text.c_str(), static_cast<int>(g.status_text.size()));
@@ -1445,7 +1488,7 @@ bool save_png(const std::wstring& path) {
     HGDIOBJ obmp = SelectObject(mem, bmp);
 
     RECT all = {0, 0, W, H};
-    HBRUSH bg = CreateSolidBrush(RGB(255, 255, 255));
+    HBRUSH bg = CreateSolidBrush(g_theme->bg_plot);
     FillRect(mem, &all, bg);
     DeleteObject(bg);
     SelectObject(mem, reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT)));
@@ -1669,6 +1712,9 @@ void sync_menu() {
     chk(IDM_VISMOOTH, g.visual_smooth);
     chk(IDC_MEASURE, g.measure_mode);
     chk(IDC_AUTOY, g.auto_y);
+    chk(IDM_THEME, g_theme == &kDarkTheme);
+    ModifyMenuW(g.menu, IDM_THEME, MF_BYCOMMAND | MF_STRING, IDM_THEME,
+                g_theme == &kDarkTheme ? L"Светлая тема" : L"Тёмная тема");
 }
 
 HMENU make_menu() {
@@ -1695,6 +1741,7 @@ HMENU make_menu() {
     AppendMenuW(view, MF_STRING, IDC_AUTOY, L"Auto Y");
     AppendMenuW(view, MF_STRING, IDM_VISMOOTH, L"Сглаживание\tC");
     AppendMenuW(view, MF_STRING, IDC_PLAY, L"Play / Pause\tПробел");
+    AppendMenuW(view, MF_STRING, IDM_THEME, L"Тёмная тема\tT");
     HMENU speed = CreatePopupMenu();
     AppendMenuW(speed, MF_STRING, IDM_SPEED_00001, L"0.0001×");
     AppendMenuW(speed, MF_STRING, IDM_SPEED_0001, L"0.001×");
@@ -1802,8 +1849,10 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case WM_CTLCOLORSTATIC:
         case WM_CTLCOLORBTN: {
-            SetBkMode(reinterpret_cast<HDC>(wp), TRANSPARENT);
-            return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
+            HDC dc = reinterpret_cast<HDC>(wp);
+            SetBkMode(dc, TRANSPARENT);
+            SetTextColor(dc, g_theme->text_primary);
+            return reinterpret_cast<LRESULT>(g_panel_brush);
         }
         case WM_CLOSE:
             ShowWindow(hwnd, SW_HIDE);   // keep state; reopen instantly
@@ -1880,10 +1929,10 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             HDC hdc = BeginPaint(hwnd, &ps);
             RECT rc;
             GetClientRect(hwnd, &rc);
-            HBRUSH bg = CreateSolidBrush(RGB(255, 255, 255));
+            HBRUSH bg = CreateSolidBrush(g_theme->bg_main);
             FillRect(hdc, &rc, bg);
             DeleteObject(bg);
-            HPEN border = CreatePen(PS_SOLID, 1, RGB(210, 218, 228));
+            HPEN border = CreatePen(PS_SOLID, 1, g_theme->separator);
             HGDIOBJ oldp = SelectObject(hdc, border);
             HGDIOBJ oldb = SelectObject(hdc, GetStockObject(NULL_BRUSH));
             RoundRect(hdc, 12, 12, rc.right - 12, rc.bottom - 12, 8, 8);
@@ -1893,6 +1942,8 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             EndPaint(hwnd, &ps);
             return 0;
         }
+        case WM_ERASEBKGND:
+            return 1;
         case WM_COMMAND:
             switch (LOWORD(wp)) {
                 case IDC_OPEN: ShowWindow(hwnd, SW_HIDE); SendMessageW(g.main, WM_COMMAND, IDC_OPEN, 0); return 0;
@@ -1911,11 +1962,11 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             bool active = is_toggle && (SendMessageW(dis->hwndItem, BM_GETCHECK, 0, 0) == BST_CHECKED);
             COLORREF bg_col, border_col, text_col;
             if (active) {
-                bg_col = kBtnActive; border_col = kBtnActive; text_col = RGB(255,255,255);
+                bg_col = g_theme->btn_active; border_col = g_theme->btn_active; text_col = RGB(255,255,255);
             } else if (pressed) {
-                bg_col = kAccentHover; border_col = kAccentHover; text_col = RGB(255,255,255);
+                bg_col = g_theme->accent_hover; border_col = g_theme->accent_hover; text_col = RGB(255,255,255);
             } else {
-                bg_col = kBtnBg; border_col = kBtnBorder; text_col = kTextPrimary;
+                bg_col = g_theme->btn_bg; border_col = g_theme->btn_border; text_col = g_theme->text_primary;
             }
             HBRUSH bg = CreateSolidBrush(bg_col);
             HPEN border = CreatePen(PS_SOLID, 1, border_col);
@@ -1942,8 +1993,8 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_CTLCOLORSTATIC: {
             HDC dc = reinterpret_cast<HDC>(wp);
             SetBkMode(dc, TRANSPARENT);
-            SetTextColor(dc, kTextPrimary);
-            return reinterpret_cast<LRESULT>(GetStockObject(WHITE_BRUSH));
+            SetTextColor(dc, g_theme->text_primary);
+            return reinterpret_cast<LRESULT>(g_panel_brush);
         }
         case WM_DESTROY:
             g.welcome_wnd = nullptr;
@@ -2027,6 +2078,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                       DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                       CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
             SetTimer(hwnd, 2, 50, nullptr);   // hover tracking timer
+            update_theme_brushes();
             sync_menu();
             set_status();
             return 0;
@@ -2052,10 +2104,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_CTLCOLORBTN: {
             HDC dc = reinterpret_cast<HDC>(wp);
             SetBkMode(dc, TRANSPARENT);
-            SetTextColor(dc, kTextPrimary);
+            SetTextColor(dc, g_theme->text_primary);
             SelectObject(dc, g.ui_font);
-            static HBRUSH panel_brush = CreateSolidBrush(kBgPanel);
-            return reinterpret_cast<LRESULT>(panel_brush);
+            return reinterpret_cast<LRESULT>(g_panel_brush);
         }
         case WM_PAINT: {
             PAINTSTRUCT ps;
@@ -2077,21 +2128,21 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             COLORREF bg_col, border_col, text_col;
             if (active) {
-                bg_col = kBtnActive;
-                border_col = kBtnActive;
+                bg_col = g_theme->btn_active;
+                border_col = g_theme->btn_active;
                 text_col = RGB(255, 255, 255);
             } else if (pressed) {
-                bg_col = kAccentHover;
-                border_col = kAccentHover;
+                bg_col = g_theme->accent_hover;
+                border_col = g_theme->accent_hover;
                 text_col = RGB(255, 255, 255);
             } else if (hover) {
-                bg_col = kBtnHover;
-                border_col = kBtnBorder;
-                text_col = kTextPrimary;
+                bg_col = g_theme->btn_hover;
+                border_col = g_theme->btn_border;
+                text_col = g_theme->text_primary;
             } else {
-                bg_col = kBtnBg;
-                border_col = kBtnBorder;
-                text_col = kTextPrimary;
+                bg_col = g_theme->btn_bg;
+                border_col = g_theme->btn_border;
+                text_col = g_theme->text_primary;
             }
 
             HBRUSH bg = CreateSolidBrush(bg_col);
@@ -2219,6 +2270,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     g.visual_smooth = !g.visual_smooth;
                     sync_menu();
                     set_status();
+                    InvalidateRect(hwnd, nullptr, TRUE);
+                    return 0;
+                case IDM_THEME:
+                    g_theme = (g_theme == &kLightTheme) ? &kDarkTheme : &kLightTheme;
+                    update_theme_brushes();
+                    sync_menu();
+                    if (g.welcome_wnd) InvalidateRect(g.welcome_wnd, nullptr, TRUE);
                     InvalidateRect(hwnd, nullptr, TRUE);
                     return 0;
                 case IDM_ADD_VLINE:
@@ -2492,6 +2550,7 @@ HACCEL make_accelerators() {
         {FVIRTKEY, VK_RIGHT, IDC_PANRIGHT},
         {FVIRTKEY, VK_HOME, IDC_RESET},
         {FVIRTKEY, 'C', IDM_VISMOOTH},
+        {FVIRTKEY, 'T', IDM_THEME},
         {FVIRTKEY, 'L', IDM_ADD_VLINE},
         {FVIRTKEY, 'H', IDM_ADD_HLINE},
         {FVIRTKEY, 'K', IDM_ADD_MARKER},
