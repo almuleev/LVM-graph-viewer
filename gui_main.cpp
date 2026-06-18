@@ -104,6 +104,8 @@ enum {
     IDM_UNDO = 1400,
     IDM_REDO,
     IDM_THEME = 1500,
+    IDM_LANG_RU = 1600,
+    IDM_LANG_EN = 1601,
 
     IDC_CHAN_BASE = 2000,
 };
@@ -151,7 +153,7 @@ static const Theme kLightTheme = {
     RGB(200, 208, 218),   // btn_border
     RGB(230, 235, 242),   // btn_hover
     RGB(0, 120, 212),     // btn_active
-    RGB(210, 215, 220),   // btn_pressed
+    RGB(170, 175, 180),   // btn_pressed
     RGB(220, 40, 40),     // playhead
     RGB(200, 0, 0),       // marker_color
 };
@@ -175,18 +177,178 @@ static const Theme kDarkTheme = {
     RGB(75, 80, 90),      // btn_border
     RGB(70, 75, 85),      // btn_hover
     RGB(0, 150, 255),     // btn_active
-    RGB(45, 50, 60),      // btn_pressed
+    RGB(20, 25, 35),      // btn_pressed
     RGB(255, 60, 60),     // playhead
     RGB(255, 80, 80),     // marker_color
 };
 
 const Theme* g_theme = &kLightTheme;
 HBRUSH g_panel_brush = nullptr;
+HBRUSH g_welcome_brush = nullptr;
 
 void update_theme_brushes() {
     if (g_panel_brush) DeleteObject(g_panel_brush);
     g_panel_brush = CreateSolidBrush(g_theme->bg_panel);
+    if (g_welcome_brush) DeleteObject(g_welcome_brush);
+    g_welcome_brush = CreateSolidBrush(g_theme->bg_main);
 }
+
+// ---- string table --------------------------------------------------------
+struct Strings {
+    const wchar_t* app_title;
+    const wchar_t* menu_file; const wchar_t* menu_view; const wchar_t* menu_meas; const wchar_t* menu_lines; const wchar_t* menu_markers; const wchar_t* menu_help;
+    const wchar_t* m_open; const wchar_t* m_savepng; const wchar_t* m_savecsv; const wchar_t* m_undo; const wchar_t* m_redo; const wchar_t* m_exit;
+    const wchar_t* m_timehz; const wchar_t* m_zoomin; const wchar_t* m_zoomout; const wchar_t* m_reset; const wchar_t* m_autoy; const wchar_t* m_smooth; const wchar_t* m_play; const wchar_t* m_theme; const wchar_t* m_speed;
+    const wchar_t* m_points; const wchar_t* m_ptsettings; const wchar_t* m_clearpts;
+    const wchar_t* m_vline; const wchar_t* m_hline; const wchar_t* m_clearlines;
+    const wchar_t* m_addmarker; const wchar_t* m_clearmarkers;
+    const wchar_t* m_hotkeys; const wchar_t* m_about;
+    const wchar_t* btn_open; const wchar_t* btn_png; const wchar_t* btn_csv; const wchar_t* btn_timehz; const wchar_t* btn_play; const wchar_t* btn_pause;
+    const wchar_t* btn_measure; const wchar_t* btn_reset; const wchar_t* btn_autoy; const wchar_t* btn_settings;
+    const wchar_t* panel_channels;
+    const wchar_t* st_time; const wchar_t* st_hz; const wchar_t* st_channels; const wchar_t* st_points; const wchar_t* st_window; const wchar_t* st_yauto; const wchar_t* st_yfix; const wchar_t* st_lines; const wchar_t* st_markers; const wchar_t* st_speed;
+    const wchar_t* plot_xlabel_time; const wchar_t* plot_xlabel_freq;
+    const wchar_t* pt_num; const wchar_t* pt_x; const wchar_t* pt_y; const wchar_t* pt_dx; const wchar_t* pt_dy; const wchar_t* pt_invdt; const wchar_t* pt_dist;
+    const wchar_t* pt_snap;
+    const wchar_t* dlg_ptsettings_title;
+    const wchar_t* dlg_hotkeys_title; const wchar_t* dlg_about_title;
+    const wchar_t* msg_nodata; const wchar_t* msg_openfirst; const wchar_t* msg_savepng_err; const wchar_t* msg_savecsv_err; const wchar_t* msg_read_err;
+    const wchar_t* welcome_title; const wchar_t* welcome_subtitle; const wchar_t* welcome_body;
+    const wchar_t* welcome_btn_open; const wchar_t* welcome_btn_settings; const wchar_t* welcome_btn_hotkeys; const wchar_t* welcome_btn_start;
+    const wchar_t* hk_title;
+    const wchar_t* about_body;
+    const wchar_t* hover_open; const wchar_t* hover_png; const wchar_t* hover_csv; const wchar_t* hover_timehz; const wchar_t* hover_play; const wchar_t* hover_pause; const wchar_t* hover_measure; const wchar_t* hover_reset; const wchar_t* hover_autoy; const wchar_t* hover_settings;
+    const wchar_t* lang_ru; const wchar_t* lang_en;
+    const wchar_t* m_lang;
+    const wchar_t* msg_loading;
+    const wchar_t* msg_openprompt;
+    const wchar_t* msg_delta_f;
+    const wchar_t* msg_delta_t;
+    const wchar_t* st_spline;
+    const wchar_t* fmt_hz;
+    const wchar_t* fmt_sec;
+    const wchar_t* fmt_y;
+    const wchar_t* unit_hz;
+    const wchar_t* unit_sec;
+    const wchar_t* theme_light;
+    const wchar_t* theme_dark;
+    const wchar_t* dlg_color;
+    const wchar_t* msg_error_title;
+    const wchar_t* msg_saved_png;
+    const wchar_t* msg_saved_csv;
+    const wchar_t* filter_open;
+    const wchar_t* filter_png;
+    const wchar_t* filter_csv;
+    const wchar_t* csv_time;
+    const wchar_t* csv_freq;
+    const wchar_t* status_vline;
+    const wchar_t* status_hline;
+    const wchar_t* status_marker;
+};
+
+static const Strings kRu = {
+    L"LVM Viewer",
+    L"Файл", L"Вид", L"Точки", L"Линии", L"Маркеры", L"Справка",
+    L"Открыть файл…\tCtrl+O", L"Сохранить PNG…\tCtrl+S", L"Сохранить CSV…\tCtrl+E", L"Отменить\tCtrl+Z", L"Повторить\tCtrl+Shift+Z", L"Выход\tAlt+F4",
+    L"Время / Гц\tM", L"Увеличить\t+", L"Уменьшить\t−", L"Сбросить вид\tHome", L"Auto Y", L"Сглаживание\tC", L"Play / Pause\tПробел", L"Тёмная тема\tT", L"Скорость",
+    L"Точки\tV", L"Настройки…", L"Очистить\tDelete",
+    L"Вертикальная\tL", L"Горизонтальная\tH", L"Очистить",
+    L"Добавить\tK", L"Очистить",
+    L"Горячие клавиши…\tF1", L"О программе…",
+    L"Открыть", L"PNG", L"CSV", L"Время/Гц", L"▶ Play", L"⏸ Пауза", L"Точки", L"Сброс", L"Auto zoom", L"Настройки",
+    L"Каналы",
+    L"Время", L"Гц (FFT)", L"Каналов", L"Точек", L"Окно", L"Y: авто", L"Y: фикс.", L"Линий", L"Маркеров", L"Скорость",
+    L"Время, c", L"Частота, Гц",
+    L"Показывать номер точки", L"Показывать координату X", L"Показывать координату Y", L"Расстояние между точками по X (Δx)", L"Расстояние между точками по Y (Δy)", L"Частота 1/Δt", L"Расстояние d (по прямой)",
+    L"Примагничивать маркеры к графику",
+    L"Настройки точек измерения",
+    L"Горячие клавиши — LVM Viewer", L"О программе — LVM Viewer",
+    L"Нет данных", L"Сначала откройте файл.", L"Не удалось сохранить PNG.", L"Не удалось сохранить CSV.", L"Ошибка чтения",
+    L"LVM Viewer", L"Просмотрщик сигналов LabVIEW (.lvm / .txt)",
+    L"Как работать с приложением:\r   •  «Открыть файл» (O) — загрузите .lvm или .txt.\r   •  «Время / Гц» (M) — график сигнала или его спектр (БПФ).\r   •  «Измерение» (V) — кликайте точки на графике. Что показывать\r       у точек и примагничивание — в окне «Настройки точек».\r   •  Колесо мыши — масштаб, тяга ЛКМ — прокрутка по времени.\r   •  «Фикс. Y» — зафиксировать масштаб по высоте.\r   •  Пробел — воспроизведение в реальном времени (1 с = 1 с).\r   •  F1 — полный список горячих клавиш.",
+    L"Открыть файл", L"Настройки точек…", L"Горячие клавиши", L"Начать работу",
+    L"Файлы\n  O / Ctrl+O\t— Открыть\n  S / Ctrl+S\t— PNG\n  E / Ctrl+E\t— CSV\n  Ctrl+Z\t— Отменить\n  Ctrl+Shift+Z\t— Повторить\n\nВид\n  M\t— Время/Гц\n  C\t— Сглаживание\n  + / ↑\t— Увеличить\n  − / ↓\t— Уменьшить\n  ← / →\t— Сдвиг влево/вправо\n  Home\t— Сброс\n  Пробел\t— Play / Pause\n\nЛинии и маркеры\n  L\t— Вертикальная линия\n  H\t— Горизонтальная линия\n  K\t— Маркер\n  Esc\t— Отменить добавление\n\nТочки\n  V\t— Режим точек вкл/выкл\n  Delete\t— Очистить точки\n\nМышь\n  Колесо\t— Масштаб под курсором\n  Shift+колесо\t— Прокрутка влево/вправо\n  Ctrl+колесо\t— Масштаб по высоте (Y)\n  Alt+колесо\t— Точный масштаб (X)\n  ЛКМ + тяга\t— Панорамирование\n  ЛКМ\t— Поставить точку / линию / маркер (в режиме)\n  ПКМ\t— Очистить точки\n\n  F1\t— Эта справка",
+    L"LVM Viewer — просмотрщик сигналов LabVIEW (.lvm / .txt)\n\nНативное приложение Win32 + GDI/GDI+, без внешних\nзависимостей и без Qt. Время и спектр (БПФ), измерения\nс примагничиванием, направляющие линии, визуальное\nсглаживание, экспорт PNG/CSV.\n\nСборка: build_gui.ps1 (MinGW g++) или make gui.",
+    L"Открыть файл…", L"Сохранить PNG", L"Сохранить CSV", L"Переключить Время / Гц", L"Воспроизведение", L"Пауза", L"Режим измерения точек", L"Сбросить вид", L"Авто масштаб по Y", L"Настройки точек",
+    L"Русский", L"English", L"Язык",
+    L"Загрузка файла...\nПожалуйста, подождите",
+    L"Откройте файл .lvm или .txt (кнопка «Открыть файл» / клавиша O)",
+    L"   |   Δf = %.5g Гц,  Δamp = %.4g",
+    L"   |   Δt = %.6g c,  Δy = %.5g,  1/Δt = %.6g Гц",
+    L" (+сплайн)",
+    L"%.5g Гц",
+    L"%.5g c",
+    L"y=%.5g",
+    L"Гц",
+    L"c",
+    L"Светлая тема",
+    L"Тёмная тема",
+    L"Цвет маркеров…",
+    L"Ошибка",
+    L"Сохранено (PNG): ",
+    L"Сохранено (CSV): ",
+    L"LVM / текстовые файлы\0*.lvm;*.txt\0Все файлы\0*.*\0",
+    L"PNG изображение\0*.png\0Все файлы\0*.*\0",
+    L"CSV файл\0*.csv\0Все файлы\0*.*\0",
+    L"Time",
+    L"Frequency",
+    L"Кликните на графике, чтобы поставить вертикальную линию (Esc — отмена). Можно добавить несколько линий подряд.",
+    L"Кликните на графике, чтобы поставить горизонтальную линию (Esc — отмена). Можно добавить несколько линий подряд.",
+    L"Кликните на графике, чтобы поставить маркер (Esc — отмена)."
+};
+
+static const Strings kEn = {
+    L"LVM Viewer",
+    L"File", L"View", L"Points", L"Lines", L"Markers", L"Help",
+    L"Open file…\tCtrl+O", L"Save PNG…\tCtrl+S", L"Save CSV…\tCtrl+E", L"Undo\tCtrl+Z", L"Redo\tCtrl+Shift+Z", L"Exit\tAlt+F4",
+    L"Time / Hz\tM", L"Zoom in\t+", L"Zoom out\t−", L"Reset view\tHome", L"Auto Y", L"Smoothing\tC", L"Play / Pause\tSpace", L"Dark theme\tT", L"Speed",
+    L"Points\tV", L"Settings…", L"Clear\tDelete",
+    L"Vertical\tL", L"Horizontal\tH", L"Clear",
+    L"Add\tK", L"Clear",
+    L"Keyboard shortcuts…\tF1", L"About…",
+    L"Open", L"PNG", L"CSV", L"Time/Hz", L"▶ Play", L"⏸ Pause", L"Points", L"Reset", L"Auto zoom", L"Settings",
+    L"Channels",
+    L"Time", L"Hz (FFT)", L"Channels", L"Points", L"Window", L"Y: auto", L"Y: fixed", L"Lines", L"Markers", L"Speed",
+    L"Time, s", L"Frequency, Hz",
+    L"Show point number", L"Show X coordinate", L"Show Y coordinate", L"Distance along X (Δx)", L"Distance along Y (Δy)", L"Frequency 1/Δt", L"Straight-line distance d",
+    L"Snap markers to graph",
+    L"Measurement point settings",
+    L"Keyboard shortcuts — LVM Viewer", L"About — LVM Viewer",
+    L"No data", L"Open a file first.", L"Failed to save PNG.", L"Failed to save CSV.", L"Read error",
+    L"LVM Viewer", L"LabVIEW signal viewer (.lvm / .txt)",
+    L"How to use the app:\r   •  «Open file» (O) — load a .lvm or .txt.\r   •  «Time / Hz» (M) — signal plot or its FFT spectrum.\r   •  «Measure» (V) — click points on the plot. What to show\r       at points and snapping — in the «Point settings» window.\r   •  Mouse wheel — zoom, left-drag — pan.\r   •  «Lock Y» — freeze the vertical scale.\r   •  Space — real-time playback (1 s = 1 s).\r   •  F1 — full list of keyboard shortcuts.",
+    L"Open file", L"Point settings…", L"Keyboard shortcuts", L"Start working",
+    L"Files\n  O / Ctrl+O\t— Open\n  S / Ctrl+S\t— PNG\n  E / Ctrl+E\t— CSV\n  Ctrl+Z\t— Undo\n  Ctrl+Shift+Z\t— Redo\n\nView\n  M\t— Time / Hz\n  C\t— Smoothing\n  + / ↑\t— Zoom in\n  − / ↓\t— Zoom out\n  ← / →\t— Pan left / right\n  Home\t— Reset view\n  Space\t— Play / Pause\n\nLines and markers\n  L\t— Vertical line\n  H\t— Horizontal line\n  K\t— Marker\n  Esc\t— Cancel adding\n\nPoints\n  V\t— Measure mode on/off\n  Delete\t— Clear points\n\nMouse\n  Wheel\t— Zoom under cursor\n  Shift+wheel\t— Pan left / right\n  Ctrl+wheel\t— Zoom Y\n  Alt+wheel\t— Fine zoom X\n  Left-drag\t— Pan\n  Left-click\t— Drop point / line / marker (in mode)\n  Right-click\t— Clear points\n\n  F1\t— This help",
+    L"LVM Viewer — LabVIEW signal viewer (.lvm / .txt)\n\nNative Win32 + GDI/GDI+ application, no external\ndependencies, no Qt. Time and spectrum (FFT), measurements\nwith snapping, guide lines, visual smoothing, PNG/CSV export.\n\nBuild: build_gui.ps1 (MinGW g++) or make gui.",
+    L"Open file…", L"Save PNG", L"Save CSV", L"Toggle Time / Hz", L"Playback", L"Pause", L"Measurement point mode", L"Reset view", L"Auto Y scale", L"Point settings",
+    L"Русский", L"English", L"Language",
+    L"Loading file...\nPlease wait",
+    L"Open a .lvm or .txt file (click «Open file» / press O)",
+    L"   |   Δf = %.5g Hz,  Δamp = %.4g",
+    L"   |   Δt = %.6g s,  Δy = %.5g,  1/Δt = %.6g Hz",
+    L" (+spline)",
+    L"%.5g Hz",
+    L"%.5g s",
+    L"y=%.5g",
+    L"Hz",
+    L"s",
+    L"Light theme",
+    L"Dark theme",
+    L"Marker colour…",
+    L"Error",
+    L"Saved (PNG): ",
+    L"Saved (CSV): ",
+    L"LVM / text files\0*.lvm;*.txt\0All files\0*.*\0",
+    L"PNG image\0*.png\0All files\0*.*\0",
+    L"CSV file\0*.csv\0All files\0*.*\0",
+    L"Time",
+    L"Frequency",
+    L"Click on the plot to place a vertical line (Esc to cancel). You can add multiple lines.",
+    L"Click on the plot to place a horizontal line (Esc to cancel). You can add multiple lines.",
+    L"Click on the plot to place a marker (Esc to cancel)."
+};
+
+const Strings* g_str = &kRu;
 
 // Which read-outs to draw next to measurement markers (toggled from the
 // "Измерения → Отображать у точек" menu).
@@ -417,33 +579,33 @@ void set_status() {
     std::wstring s;
     wchar_t buf[512];
     if (!has_data()) {
-        s = L"Файл не открыт. Нажмите «Открыть файл» (или клавишу O).";
+        s = g_str->msg_nodata;
     } else if (g.freq_mode) {
         swprintf(buf, 512,
-                 L"Гц (FFT)  |  Каналов: %zu  |  Найквист: %.4g Гц  |  Окно: %.4g .. %.4g Гц",
+                 g_str->st_hz,
                  g.ds.channel_count(), g.spec_valid ? g.spec.nyquist : 0.0,
                  g.freq_start, g.freq_end);
         s = buf;
     } else {
         swprintf(buf, 512,
-                 L"Время  |  Каналов: %zu  |  Точек: %zu  |  Окно: %.5g .. %.5g c  |  Y: ",
+                 g_str->st_time,
                  g.ds.channel_count(), g.ds.rows(), g.win_start, g.win_end);
         s = buf;
-        s += g.auto_y ? L"авто" : L"фикс.";
-        if (g.visual_smooth) s += L" (+сплайн)";
+        s += g.auto_y ? g_str->st_yauto : g_str->st_yfix;
+        if (g.visual_smooth) s += g_str->st_spline;
     }
     if (has_data()) {
         std::size_t nlines = 0;
         for (const auto& gl : g.guides)
             if (gl.freq == g.freq_mode) ++nlines;
-        if (nlines) { swprintf(buf, 512, L"  |  Линий: %zu", nlines); s += buf; }
+        if (nlines) { swprintf(buf, 512, g_str->st_lines, nlines); s += buf; }
         std::size_t nmark = 0;
         for (const auto& m : g.markers)
             if (m.freq == g.freq_mode) ++nmark;
-        if (nmark) { swprintf(buf, 512, L"  |  Маркеров: %zu", nmark); s += buf; }
+        if (nmark) { swprintf(buf, 512, g_str->st_markers, nmark); s += buf; }
     }
     if (g.playing) {
-        swprintf(buf, 512, L"  |  Скорость: %.4g×", g.play_speed);
+        swprintf(buf, 512, g_str->st_speed, g.play_speed);
         s += buf;
     }
     if (g.points.size() >= 2) {
@@ -451,10 +613,10 @@ void set_status() {
         const auto& b = g.points.back();
         const double dx = b.first - a.first, dy = b.second - a.second;
         if (g.freq_mode) {
-            swprintf(buf, 512, L"   |   Δf = %.5g Гц,  Δamp = %.4g", dx, dy);
+            swprintf(buf, 512, g_str->msg_delta_f, dx, dy);
         } else {
             const double inv = (dx != 0.0) ? 1.0 / dx : 0.0;
-            swprintf(buf, 512, L"   |   Δt = %.6g c,  Δy = %.5g,  1/Δt = %.6g Гц", dx, dy, inv);
+            swprintf(buf, 512, g_str->msg_delta_t, dx, dy, inv);
         }
         s += buf;
     }
@@ -674,7 +836,7 @@ void reset_view() {
 void stop_play() {
     g.playing = false;
     KillTimer(g.main, 1);
-    if (g.play) SetWindowTextW(g.play, L"▶ Play");
+    if (g.play) SetWindowTextW(g.play, g_str->btn_play);
 }
 
 void start_play() {
@@ -687,7 +849,7 @@ void start_play() {
     g.play_anchor_data = g.playhead;
     QueryPerformanceCounter(&g.play_anchor_qpc);
     SetTimer(g.main, 1, 16, nullptr);   // ~60 fps for smooth scrolling
-    if (g.play) SetWindowTextW(g.play, L"⏸ Пауза");
+    if (g.play) SetWindowTextW(g.play, g_str->btn_pause);
 }
 
 void toggle_play() {
@@ -727,7 +889,7 @@ void hide_loading() {
 }
 
 bool load_path(const std::wstring& wpath) {
-    show_loading(L"Загрузка файла...\nПодождите");
+    show_loading(g_str->msg_loading);
     SetCursor(LoadCursor(nullptr, IDC_WAIT));
     lvm::Dataset ds = lvm::read_lvm_file(to_acp(wpath.c_str()));
     SetCursor(LoadCursor(nullptr, IDC_ARROW));
@@ -764,7 +926,7 @@ bool load_path(const std::wstring& wpath) {
 
     const wchar_t* base = wcsrchr(wpath.c_str(), L'\\');
     g.file_name = base ? base + 1 : wpath;
-    SetWindowTextW(g.main, (L"LVM Viewer — " + g.file_name).c_str());
+    SetWindowTextW(g.main, (std::wstring(g_str->app_title) + L" — " + g.file_name).c_str());
     if (g.welcome_wnd) ShowWindow(g.welcome_wnd, SW_HIDE);
 
     rebuild_checks();
@@ -779,13 +941,13 @@ void open_file() {
     OPENFILENAMEW ofn = {};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = g.main;
-    ofn.lpstrFilter = L"LVM / текстовые файлы\0*.lvm;*.txt\0Все файлы\0*.*\0";
+    ofn.lpstrFilter = g_str->filter_open;
     ofn.lpstrFile = file;
     ofn.nMaxFile = 2048;
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
     if (!GetOpenFileNameW(&ofn)) return;
     if (!load_path(file))
-        MessageBoxW(g.main, to_w(g.last_error).c_str(), L"Ошибка чтения", MB_ICONERROR | MB_OK);
+        MessageBoxW(g.main, to_w(g.last_error).c_str(), g_str->msg_read_err, MB_ICONERROR | MB_OK);
 }
 
 // ---- series ---------------------------------------------------------------
@@ -837,6 +999,10 @@ void draw_text(HDC dc, int x, int y, const wchar_t* s, UINT align) {
 
 void draw_axes(HDC dc, const RECT& p, double x0, double x1, double y0, double y1,
                const wchar_t* xlabel) {
+    HBRUSH plot_bg = CreateSolidBrush(g_theme->bg_plot);
+    RECT fill_p = {p.left, p.top, p.right, p.bottom};
+    FillRect(dc, &fill_p, plot_bg);
+    DeleteObject(plot_bg);
     HPEN grid = CreatePen(PS_SOLID, 1, g_theme->grid);
     HPEN frame = CreatePen(PS_SOLID, 1, g_theme->frame);
     HGDIOBJ old = SelectObject(dc, grid);
@@ -1000,7 +1166,7 @@ void draw_guides(HDC dc) {
             const int X = mx(gl.value);
             if (X < p.left || X > p.right) continue;
             MoveToEx(dc, X, p.top, nullptr); LineTo(dc, X, p.bottom);
-            swprintf(b, 48, g.freq_mode ? L"%.5g Гц" : L"%.5g c", gl.value);
+            swprintf(b, 48, g.freq_mode ? g_str->fmt_hz : g_str->fmt_sec, gl.value);
             SetTextAlign(dc, TA_LEFT | TA_TOP);
             SIZE ts;
             GetTextExtentPoint32W(dc, b, lstrlenW(b), &ts);
@@ -1012,7 +1178,7 @@ void draw_guides(HDC dc) {
             const int Y = my(gl.value);
             if (Y < p.top || Y > p.bottom) continue;
             MoveToEx(dc, p.left, Y, nullptr); LineTo(dc, p.right, Y);
-            swprintf(b, 48, L"y=%.5g", gl.value);
+            swprintf(b, 48, g_str->fmt_y, gl.value);
             SetTextAlign(dc, TA_LEFT | TA_BOTTOM);
             SIZE ts;
             GetTextExtentPoint32W(dc, b, lstrlenW(b), &ts);
@@ -1062,7 +1228,7 @@ void draw_markers(HDC dc) {
             txt = m.label.c_str();
             tlen = static_cast<int>(m.label.size());
         } else {
-            swprintf(b, 48, g.freq_mode ? L"%.5g Гц" : L"%.5g c", m.x);
+            swprintf(b, 48, g.freq_mode ? g_str->fmt_hz : g_str->fmt_sec, m.x);
             txt = b;
             tlen = lstrlenW(b);
         }
@@ -1097,7 +1263,7 @@ void draw_measure(HDC dc) {
     auto my = [&](double dy) {
         return p.bottom - static_cast<int>((dy - g.vy0) / (g.vy1 - g.vy0) * (p.bottom - p.top));
     };
-    const wchar_t* xunit = g.freq_mode ? L"Гц" : L"c";
+    const wchar_t* xunit = g.freq_mode ? g_str->unit_hz : g_str->unit_sec;
 
     HRGN clip = CreateRectRgn(p.left, p.top, p.right + 1, p.bottom + 1);
     SelectClipRgn(dc, clip);
@@ -1128,8 +1294,8 @@ void draw_measure(HDC dc) {
 
         std::wstring lab;
         if (g.pdisp.number) { swprintf(b, 96, L"#%zu ", i + 1); lab += b; }
-        if (g.pdisp.x) { swprintf(b, 96, L"x=%.5g", g.points[i].first); lab += b; lab += xunit; lab += L" "; }
-        if (g.pdisp.y) { swprintf(b, 96, L"y=%.5g", g.points[i].second); lab += b; }
+        if (g.pdisp.x) { swprintf(b, 96, g_str->pt_x, g.points[i].first); lab += b; lab += xunit; lab += L" "; }
+        if (g.pdisp.y) { swprintf(b, 96, g_str->fmt_y, g.points[i].second); lab += b; }
         if (!lab.empty()) {
             SetTextColor(dc, g.marker_color);
             SetTextAlign(dc, TA_LEFT | TA_BOTTOM);
@@ -1143,14 +1309,14 @@ void draw_measure(HDC dc) {
             const double dx = g.points[i].first - g.points[i - 1].first;
             const double dy = g.points[i].second - g.points[i - 1].second;
             std::wstring dl;
-            if (g.pdisp.dx) { swprintf(b, 96, L"Δx=%.5g", dx); dl += b; dl += xunit; dl += L" "; }
-            if (g.pdisp.dy) { swprintf(b, 96, L"Δy=%.5g ", dy); dl += b; }
+            if (g.pdisp.dx) { swprintf(b, 96, g_str->pt_dx, dx); dl += b; dl += xunit; dl += L" "; }
+            if (g.pdisp.dy) { swprintf(b, 96, g_str->pt_dy, dy); dl += b; }
             if (g.pdisp.inv_dt && !g.freq_mode) {
                 const double inv = (dx != 0.0) ? 1.0 / dx : 0.0;
-                swprintf(b, 96, L"1/Δt=%.5g Гц ", inv); dl += b;
+                swprintf(b, 96, g_str->pt_invdt, inv); dl += b;
             }
             if (g.pdisp.dist) {
-                swprintf(b, 96, L"d=%.5g", std::sqrt(dx * dx + dy * dy)); dl += b;
+                swprintf(b, 96, g_str->pt_dist, std::sqrt(dx * dx + dy * dy)); dl += b;
             }
             if (!dl.empty()) {
                 const int mxp = (mx(g.points[i].first) + mx(g.points[i - 1].first)) / 2;
@@ -1222,7 +1388,7 @@ void draw_time(HDC dc, const RECT& p) {
     current_time_yrange(ymin, ymax);
     if (!g.auto_y) { ymin = g.y_lock_min; ymax = g.y_lock_max; }
 
-    draw_axes(dc, p, g.win_start, g.win_end, ymin, ymax, L"Время, c");
+    draw_axes(dc, p, g.win_start, g.win_end, ymin, ymax, g_str->plot_xlabel_time);
 
     const int pw = p.right - p.left, ph = p.bottom - p.top;
     const double xspan = g.win_end - g.win_start;
@@ -1331,7 +1497,7 @@ void draw_time(HDC dc, const RECT& p) {
 void draw_freq(HDC dc, const RECT& p) {
     if (!g.spec_valid) compute_spectrum();
     if (!g.spec_valid || g.spec.freqs.size() < 2) {
-        draw_axes(dc, p, 0, 1, 0, 1, L"Частота, Гц");
+        draw_axes(dc, p, 0, 1, 0, 1, g_str->plot_xlabel_freq);
         return;
     }
     const auto& f = g.spec.freqs;
@@ -1354,7 +1520,7 @@ void draw_freq(HDC dc, const RECT& p) {
     double ytop = ymax * 1.08;
     if (!g.auto_y_amp) ytop = g.y_amp_max;
 
-    draw_axes(dc, p, f0, f1, 0, ytop, L"Частота, Гц");
+    draw_axes(dc, p, f0, f1, 0, ytop, g_str->plot_xlabel_freq);
 
     const int pw = p.right - p.left, ph = p.bottom - p.top;
     const double fspan = f1 - f0;
@@ -1395,7 +1561,7 @@ void draw_chart(HDC dc, const RECT& p) {
     if (!has_data()) {
         SetTextAlign(dc, TA_CENTER | TA_BASELINE);
         SetTextColor(dc, g_theme->text_secondary);
-        const wchar_t* msg = L"Откройте файл .lvm или .txt (кнопка «Открыть файл» / клавиша O)";
+        const wchar_t* msg = g_str->msg_openprompt;
         TextOutW(dc, (p.left + p.right) / 2, (p.top + p.bottom) / 2, msg, lstrlenW(msg));
         g.vvalid = false;
         return;
@@ -1454,7 +1620,7 @@ void on_paint(HDC hdc) {
     SetTextColor(mem, g_theme->text_primary);
     SetTextAlign(mem, TA_LEFT | TA_TOP);
     SelectObject(mem, g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT)));
-    TextOutW(mem, cw - kRightPanel + 12, kTopBar + 10, L"Каналы", 6);
+    TextOutW(mem, cw - kRightPanel + 12, kTopBar + 10, g_str->panel_channels, lstrlenW(g_str->panel_channels));
 
     // Draw colored channel indicators next to checkboxes
     for (std::size_t i = 0; i < g.checks.size(); ++i) {
@@ -1563,7 +1729,7 @@ bool save_csv(const std::wstring& path) {
     if (g.freq_mode) {
         if (!g.spec_valid) return false;
         std::vector<std::size_t> cols;
-        out << "Frequency";
+        out << g_str->csv_freq;
         for (std::size_t j = 0; j < g.spec.amp.size(); ++j) {
             int ci = channel_index_by_name(g.spec.names[j]);
             if (ci >= 0 && g.visible[ci]) { out << "," << g.spec.names[j]; cols.push_back(j); }
@@ -1578,7 +1744,7 @@ bool save_csv(const std::wstring& path) {
         }
     } else {
         std::vector<std::size_t> cols;
-        out << "Time";
+        out << g_str->csv_time;
         for (std::size_t c = 0; c < g.ds.channel_count(); ++c)
             if (g.visible[c]) { out << "," << g.ds.names[c]; cols.push_back(c); }
         out << "\n";
@@ -1620,28 +1786,28 @@ std::wstring file_stem() {
 void status_msg(const std::wstring& m) { if (g.status) SetWindowTextW(g.status, m.c_str()); }
 
 void save_png_dialog() {
-    if (!has_data()) { MessageBoxW(g.main, L"Сначала откройте файл.", L"Нет данных", MB_ICONINFORMATION); return; }
+    if (!has_data()) { MessageBoxW(g.main, g_str->msg_openfirst, g_str->msg_nodata, MB_ICONINFORMATION); return; }
     std::wstring def = file_stem() + (g.freq_mode ? L"_spectrum.png" : L"_plot.png");
     std::wstring path;
-    if (!save_dialog(path, L"PNG изображение\0*.png\0Все файлы\0*.*\0", L"png", def)) return;
+    if (!save_dialog(path, g_str->filter_png, L"png", def)) return;
     if (save_png(path)) {
         const wchar_t* b = wcsrchr(path.c_str(), L'\\');
-        status_msg(std::wstring(L"Сохранено (PNG): ") + (b ? b + 1 : path.c_str()));
+        status_msg(std::wstring(g_str->msg_saved_png) + (b ? b + 1 : path.c_str()));
     } else {
-        MessageBoxW(g.main, L"Не удалось сохранить PNG.", L"Ошибка", MB_ICONERROR);
+        MessageBoxW(g.main, g_str->msg_savepng_err, g_str->msg_error_title, MB_ICONERROR);
     }
 }
 
 void save_csv_dialog() {
-    if (!has_data()) { MessageBoxW(g.main, L"Сначала откройте файл.", L"Нет данных", MB_ICONINFORMATION); return; }
+    if (!has_data()) { MessageBoxW(g.main, g_str->msg_openfirst, g_str->msg_nodata, MB_ICONINFORMATION); return; }
     std::wstring def = file_stem() + (g.freq_mode ? L"_spectrum.csv" : L"_segment.csv");
     std::wstring path;
-    if (!save_dialog(path, L"CSV файл\0*.csv\0Все файлы\0*.*\0", L"csv", def)) return;
+    if (!save_dialog(path, g_str->filter_csv, L"csv", def)) return;
     if (save_csv(path)) {
         const wchar_t* b = wcsrchr(path.c_str(), L'\\');
-        status_msg(std::wstring(L"Сохранено (CSV): ") + (b ? b + 1 : path.c_str()));
+        status_msg(std::wstring(g_str->msg_saved_csv) + (b ? b + 1 : path.c_str()));
     } else {
-        MessageBoxW(g.main, L"Не удалось сохранить CSV.", L"Ошибка", MB_ICONERROR);
+        MessageBoxW(g.main, g_str->msg_savecsv_err, g_str->msg_error_title, MB_ICONERROR);
     }
 }
 
@@ -1698,50 +1864,11 @@ void snap_to_nearest(double& dx, double& dy) {
 }
 
 void show_hotkeys() {
-    MessageBoxW(g.main,
-        L"Файлы\n"
-        L"  O / Ctrl+O\t— Открыть\n"
-        L"  S / Ctrl+S\t— PNG\n"
-        L"  E / Ctrl+E\t— CSV\n"
-        L"  Ctrl+Z\t— Отменить\n"
-        L"  Ctrl+Shift+Z\t— Повторить\n\n"
-        L"Вид\n"
-        L"  M\t— Время/Гц\n"
-        L"  C\t— Сглаживание\n"
-        L"  + / ↑\t— Увеличить\n"
-        L"  − / ↓\t— Уменьшить\n"
-        L"  ← / →\t— Сдвиг влево/вправо\n"
-        L"  Home\t— Сброс\n"
-        L"  Пробел\t— Play / Pause\n\n"
-        L"Линии и маркеры\n"
-        L"  L\t— Вертикальная линия\n"
-        L"  H\t— Горизонтальная линия\n"
-        L"  K\t— Маркер\n"
-        L"  Esc\t— Отменить добавление\n\n"
-        L"Точки\n"
-        L"  V\t— Режим точек вкл/выкл\n"
-        L"  Delete\t— Очистить точки\n\n"
-        L"Мышь\n"
-        L"  Колесо\t— Масштаб под курсором\n"
-        L"  Shift+колесо\t— Прокрутка влево/вправо\n"
-        L"  Ctrl+колесо\t— Масштаб по высоте (Y)\n"
-        L"  Alt+колесо\t— Точный масштаб (X)\n"
-        L"  ЛКМ + тяга\t— Панорамирование\n"
-        L"  ЛКМ\t— Поставить точку / линию / маркер (в режиме)\n"
-        L"  ПКМ\t— Очистить точки\n\n"
-        L"  F1\t— Эта справка",
-        L"Горячие клавиши — LVM Viewer", MB_OK | MB_ICONINFORMATION);
+    MessageBoxW(g.main, g_str->hk_title, g_str->dlg_hotkeys_title, MB_OK | MB_ICONINFORMATION);
 }
 
 void show_about() {
-    MessageBoxW(g.main,
-        L"LVM Viewer — просмотрщик сигналов LabVIEW (.lvm / .txt)\n\n"
-        L"Нативное приложение Win32 + GDI/GDI+, без внешних\n"
-        L"зависимостей и без Qt. Время и спектр (БПФ), измерения\n"
-        L"с примагничиванием, направляющие линии, визуальное\n"
-        L"сглаживание, экспорт PNG/CSV.\n\n"
-        L"Сборка: build_gui.ps1 (MinGW g++) или make gui.",
-        L"О программе — LVM Viewer", MB_OK | MB_ICONINFORMATION);
+    MessageBoxW(g.main, g_str->about_body, g_str->dlg_about_title, MB_OK | MB_ICONINFORMATION);
 }
 
 // Refresh every checkable menu item from the current app state. Cheap, so we
@@ -1756,7 +1883,7 @@ void sync_menu() {
     chk(IDC_AUTOY, g.auto_y);
     chk(IDM_THEME, g_theme == &kDarkTheme);
     ModifyMenuW(g.menu, IDM_THEME, MF_BYCOMMAND | MF_STRING, IDM_THEME,
-                g_theme == &kDarkTheme ? L"Светлая тема" : L"Тёмная тема");
+                g_theme == &kDarkTheme ? g_str->theme_light : g_str->theme_dark);
 }
 
 HMENU make_menu() {
@@ -1836,14 +1963,14 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             HFONT font = g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
             struct Item { const wchar_t* text; int id; bool on; };
             const Item items[] = {
-                {L"Показывать номер точки",        IDM_PT_NUM,   g.pdisp.number},
-                {L"Показывать координату X",       IDM_PT_X,     g.pdisp.x},
-                {L"Показывать координату Y",       IDM_PT_Y,     g.pdisp.y},
-                {L"Расстояние между точками по X (Δx)", IDM_PT_DX, g.pdisp.dx},
-                {L"Расстояние между точками по Y (Δy)", IDM_PT_DY, g.pdisp.dy},
-                {L"Частота 1/Δt",                  IDM_PT_INVDT, g.pdisp.inv_dt},
-                {L"Расстояние d (по прямой)",      IDM_PT_DIST,  g.pdisp.dist},
-                {L"Примагничивать маркеры к графику", IDM_SNAP,  g.snap_to_data},
+                {g_str->pt_num,        IDM_PT_NUM,   g.pdisp.number},
+                {g_str->pt_x,          IDM_PT_X,     g.pdisp.x},
+                {g_str->pt_y,          IDM_PT_Y,     g.pdisp.y},
+                {g_str->pt_dx,         IDM_PT_DX,    g.pdisp.dx},
+                {g_str->pt_dy,         IDM_PT_DY,    g.pdisp.dy},
+                {g_str->pt_invdt,      IDM_PT_INVDT, g.pdisp.inv_dt},
+                {g_str->pt_dist,       IDM_PT_DIST,  g.pdisp.dist},
+                {g_str->pt_snap,       IDM_SNAP,     g.snap_to_data},
             };
             int y = 14;
             for (const auto& it : items) {
@@ -1855,7 +1982,7 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 y += 26;
             }
             y += 8;
-            HWND col = CreateWindowExW(0, L"BUTTON", L"Цвет маркеров…",
+            HWND col = CreateWindowExW(0, L"BUTTON", g_str->dlg_color,
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 16, y, 160, 28, hwnd,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDS_COLOR)), inst, nullptr);
             SendMessageW(col, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
@@ -1919,7 +2046,7 @@ void open_settings() {
     if (!g.settings_wnd) {
         HINSTANCE inst = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(g.main, GWLP_HINSTANCE));
         g.settings_wnd = CreateWindowExW(
-            WS_EX_TOOLWINDOW, L"LvmPtSettings", L"Настройки точек измерения",
+            WS_EX_TOOLWINDOW, L"LvmPtSettings", g_str->dlg_ptsettings_title,
             WS_POPUP | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT, CW_USEDEFAULT, 350, 340,
             g.main, nullptr, inst, nullptr);
         if (!g.settings_wnd) return;
@@ -2030,10 +2157,10 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             DeleteObject(bg);
             // "Pressed" inset effect for active toggle buttons
             if (active) {
-                HPEN inset = CreatePen(PS_SOLID, 1, g_theme->separator);
+                HPEN inset = CreatePen(PS_SOLID, 2, RGB(0,0,0));
                 HGDIOBJ old_ip = SelectObject(dc, inset);
                 HGDIOBJ old_ib = SelectObject(dc, GetStockObject(NULL_BRUSH));
-                Rectangle(dc, r.left + 1, r.top + 1, r.right - 1, r.bottom - 1);
+                Rectangle(dc, r.left + 2, r.top + 2, r.right - 2, r.bottom - 2);
                 SelectObject(dc, old_ib);
                 SelectObject(dc, old_ip);
                 DeleteObject(inset);
@@ -2057,7 +2184,7 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             HDC dc = reinterpret_cast<HDC>(wp);
             SetBkMode(dc, TRANSPARENT);
             SetTextColor(dc, g_theme->text_primary);
-            return reinterpret_cast<LRESULT>(g_panel_brush);
+            return reinterpret_cast<LRESULT>(g_welcome_brush);
         }
         case WM_DESTROY:
             g.welcome_wnd = nullptr;
@@ -2076,15 +2203,62 @@ void show_welcome(HINSTANCE inst) {
     RECT rc;
     GetClientRect(g.main, &rc);
     g.welcome_wnd = CreateWindowExW(
-        WS_EX_TOOLWINDOW,
+        0,
         L"LvmWelcome", L"",
-        WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
+        WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
         0, 0, rc.right, rc.bottom,
         g.main, nullptr, inst, nullptr);
     if (!g.welcome_wnd) return;
     ShowWindow(g.welcome_wnd, SW_SHOW);
+    BringWindowToTop(g.welcome_wnd);
     SetWindowPos(g.welcome_wnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
     UpdateWindow(g.welcome_wnd);
+}
+
+// ---- UI rebuild (language switch) --------------------------------------
+void rebuild_ui() {
+    if (!g.main) return;
+    // Update menu
+    SetMenu(g.main, nullptr);
+    if (g.menu) DestroyMenu(g.menu);
+    g.menu = make_menu();
+    SetMenu(g.main, g.menu);
+    MENUINFO mi = { sizeof(mi) };
+    mi.fMask = MIM_BACKGROUND | MIM_APPLYTOSUBMENUS;
+    mi.hbrBack = CreateSolidBrush(g_theme->bg_toolbar);
+    SetMenuInfo(g.menu, &mi);
+    
+    // Update buttons
+    SetWindowTextW(g.open, g_str->btn_open);
+    SetWindowTextW(g.savepng, g_str->btn_png);
+    SetWindowTextW(g.savecsv, g_str->btn_csv);
+    SetWindowTextW(g.mode, g_str->btn_timehz);
+    SetWindowTextW(g.play, g.playing ? g_str->btn_pause : g_str->btn_play);
+    SetWindowTextW(g.measure, g_str->btn_measure);
+    SetWindowTextW(g.reset, g_str->btn_reset);
+    SetWindowTextW(g.autoy, g_str->btn_autoy);
+    SetWindowTextW(g.ptsettings, g_str->btn_settings);
+    
+    // Update welcome window if visible
+    if (g.welcome_wnd && IsWindowVisible(g.welcome_wnd)) {
+        HINSTANCE inst = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(g.main, GWLP_HINSTANCE));
+        DestroyWindow(g.welcome_wnd);
+        g.welcome_wnd = nullptr;
+        show_welcome(inst);
+    }
+    
+    // Update settings window title
+    if (g.settings_wnd) SetWindowTextW(g.settings_wnd, g_str->dlg_ptsettings_title);
+    
+    // Update main window title
+    if (!g.file_name.empty()) {
+        SetWindowTextW(g.main, (std::wstring(g_str->app_title) + L" — " + g.file_name).c_str());
+    } else {
+        SetWindowTextW(g.main, g_str->app_title);
+    }
+    
+    InvalidateRect(g.main, nullptr, TRUE);
+    set_status();
 }
 
 // ---- window procedure ----------------------------------------------------
@@ -2122,15 +2296,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 g.buttons.push_back(b);
                 return b;
             };
-            g.open = mk(L"Открыть", IDC_OPEN, 0);
-            g.savepng = mk(L"PNG", IDC_SAVEPNG, 0);
-            g.savecsv = mk(L"CSV", IDC_SAVECSV, 0);
-            g.mode = mk(L"Время/Гц", IDC_MODE, 0);
-            g.play = mk(L"▶ Play", IDC_PLAY, 0);
-            g.measure = mk(L"Точки", IDC_MEASURE, 0);
-            g.reset = mk(L"Сброс", IDC_RESET, 0);
-            g.autoy = mk(L"Auto zoom", IDC_AUTOY, 0);
-            g.ptsettings = mk(L"Настройки", IDC_PTSETTINGS, 0);
+            g.open = mk(g_str->btn_open, IDC_OPEN, 0);
+            g.savepng = mk(g_str->btn_png, IDC_SAVEPNG, 0);
+            g.savecsv = mk(g_str->btn_csv, IDC_SAVECSV, 0);
+            g.mode = mk(g_str->btn_timehz, IDC_MODE, 0);
+            g.play = mk(g_str->btn_play, IDC_PLAY, 0);
+            g.measure = mk(g_str->btn_measure, IDC_MEASURE, 0);
+            g.reset = mk(g_str->btn_reset, IDC_RESET, 0);
+            g.autoy = mk(g_str->btn_autoy, IDC_AUTOY, 0);
+            g.ptsettings = mk(g_str->btn_settings, IDC_PTSETTINGS, 0);
 
             g.status = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE,
                                        0, 0, 10, 10, hwnd, nullptr, inst, nullptr);
@@ -2220,10 +2394,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             // "Pressed" inset effect for active toggle buttons
             if (active) {
-                HPEN inset = CreatePen(PS_SOLID, 1, g_theme->separator);
+                HPEN inset = CreatePen(PS_SOLID, 2, RGB(0,0,0));
                 HGDIOBJ old_ip = SelectObject(dc, inset);
                 HGDIOBJ old_ib = SelectObject(dc, GetStockObject(NULL_BRUSH));
-                Rectangle(dc, r.left + 1, r.top + 1, r.right - 1, r.bottom - 1);
+                Rectangle(dc, r.left + 2, r.top + 2, r.right - 2, r.bottom - 2);
                 SelectObject(dc, old_ib);
                 SelectObject(dc, old_ip);
                 DeleteObject(inset);
@@ -2262,15 +2436,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     g.hovered_btn = new_hover;
                     // Update hover status description and invalidate status bar
                     g.hover_status_text.clear();
-                    if (new_hover == g.open) g.hover_status_text = L"Открыть файл…";
-                    else if (new_hover == g.savepng) g.hover_status_text = L"Сохранить PNG";
-                    else if (new_hover == g.savecsv) g.hover_status_text = L"Сохранить CSV";
-                    else if (new_hover == g.mode) g.hover_status_text = L"Переключить Время / Гц";
-                    else if (new_hover == g.play) g.hover_status_text = g.playing ? L"Пауза" : L"Воспроизведение";
-                    else if (new_hover == g.measure) g.hover_status_text = L"Режим измерения точек";
-                    else if (new_hover == g.reset) g.hover_status_text = L"Сбросить вид";
-                    else if (new_hover == g.autoy) g.hover_status_text = L"Авто масштаб по Y";
-                    else if (new_hover == g.ptsettings) g.hover_status_text = L"Настройки точек";
+                    if (new_hover == g.open) g.hover_status_text = g_str->hover_open;
+                    else if (new_hover == g.savepng) g.hover_status_text = g_str->hover_png;
+                    else if (new_hover == g.savecsv) g.hover_status_text = g_str->hover_csv;
+                    else if (new_hover == g.mode) g.hover_status_text = g_str->hover_timehz;
+                    else if (new_hover == g.play) g.hover_status_text = g.playing ? g_str->hover_pause : g_str->hover_play;
+                    else if (new_hover == g.measure) g.hover_status_text = g_str->hover_measure;
+                    else if (new_hover == g.reset) g.hover_status_text = g_str->hover_reset;
+                    else if (new_hover == g.autoy) g.hover_status_text = g_str->hover_autoy;
+                    else if (new_hover == g.ptsettings) g.hover_status_text = g_str->hover_settings;
                     RECT rc; GetClientRect(hwnd, &rc);
                     RECT sr = {0, rc.bottom - kBottomBar, rc.right, rc.bottom};
                     InvalidateRect(hwnd, &sr, FALSE);
@@ -2362,16 +2536,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     InvalidateRect(hwnd, nullptr, TRUE);
                     return 0;
                 case IDM_ADD_VLINE:
-                    if (!has_data()) { MessageBoxW(hwnd, L"Сначала откройте файл.", L"Нет данных", MB_ICONINFORMATION); return 0; }
+                    if (!has_data()) { MessageBoxW(hwnd, g_str->msg_openfirst, g_str->msg_nodata, MB_ICONINFORMATION); return 0; }
                     g.pending_line = 1;
                     g.pending_marker = false;
-                    status_msg(L"Кликните на графике, чтобы поставить вертикальную линию (Esc — отмена). Можно добавить несколько линий подряд.");
+                    status_msg(g_str->status_vline);
                     return 0;
                 case IDM_ADD_HLINE:
-                    if (!has_data()) { MessageBoxW(hwnd, L"Сначала откройте файл.", L"Нет данных", MB_ICONINFORMATION); return 0; }
+                    if (!has_data()) { MessageBoxW(hwnd, g_str->msg_openfirst, g_str->msg_nodata, MB_ICONINFORMATION); return 0; }
                     g.pending_line = 2;
                     g.pending_marker = false;
-                    status_msg(L"Кликните на графике, чтобы поставить горизонтальную линию (Esc — отмена). Можно добавить несколько линий подряд.");
+                    status_msg(g_str->status_hline);
                     return 0;
                 case IDM_CLEAR_LINES:
                     if (!g.guides.empty()) {
@@ -2390,10 +2564,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     set_status();
                     return 0;
                 case IDM_ADD_MARKER:
-                    if (!has_data()) { MessageBoxW(hwnd, L"Сначала откройте файл.", L"Нет данных", MB_ICONINFORMATION); return 0; }
+                    if (!has_data()) { MessageBoxW(hwnd, g_str->msg_openfirst, g_str->msg_nodata, MB_ICONINFORMATION); return 0; }
                     g.pending_marker = true;
                     g.pending_line = 0;
-                    status_msg(L"Кликните на графике, чтобы поставить маркер (Esc — отмена).");
+                    status_msg(g_str->status_marker);
                     return 0;
                 case IDM_CLEAR_MARKERS:
                     if (!g.markers.empty()) {
@@ -2429,6 +2603,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 case IDC_PANRIGHT: pan_by(0.2); return 0;
                 case IDM_HOTKEYS: show_hotkeys(); return 0;
                 case IDM_ABOUT: show_about(); return 0;
+                case IDM_LANG_RU: g_str = &kRu; rebuild_ui(); return 0;
+                case IDM_LANG_EN: g_str = &kEn; rebuild_ui(); return 0;
                 default: break;
             }
             if (id >= IDC_CHAN_BASE && id < IDC_CHAN_BASE + static_cast<int>(g.visible.size())) {
@@ -2706,12 +2882,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int show) {
     wcw.lpfnWndProc = WelcomeProc;
     wcw.hInstance = inst;
     wcw.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wcw.hbrBackground = reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH));
+    wcw.hbrBackground = nullptr;
     wcw.lpszClassName = L"LvmWelcome";
     wcw.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
     RegisterClassExW(&wcw);
 
-    g.main = CreateWindowExW(0, wc.lpszClassName, L"LVM Viewer",
+    g.main = CreateWindowExW(0, wc.lpszClassName, g_str->app_title,
                              WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1180, 720,
                              nullptr, nullptr, inst, nullptr);
     if (!g.main) return 1;
@@ -2723,7 +2899,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int show) {
         std::wstring path = cmd;
         if (!path.empty() && path.front() == L'"') path = path.substr(1, path.find_last_of(L'"') - 1);
         if (!load_path(path))
-            MessageBoxW(g.main, to_w(g.last_error).c_str(), L"Ошибка чтения", MB_ICONERROR | MB_OK);
+            MessageBoxW(g.main, to_w(g.last_error).c_str(), g_str->msg_read_err, MB_ICONERROR | MB_OK);
     } else {
         show_welcome(inst);   // start screen when launched without a file
     }
