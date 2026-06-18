@@ -63,7 +63,7 @@ enum {
     IDC_RESET,
     IDC_PANLEFT,
     IDC_PANRIGHT,
-    IDC_LOCKY,          // toolbar: lock the vertical scale
+    IDC_AUTOY,          // toolbar: auto-fit vertical scale (was lock_y)
     IDC_PTSETTINGS,     // toolbar: open the measurement-point settings panel
 
     // Menu-only commands (no toolbar button).
@@ -102,11 +102,12 @@ enum {
     IDM_SPEED_10,
 
     IDM_UNDO = 1400,
+    IDM_REDO,
 
     IDC_CHAN_BASE = 2000,
 };
 
-const int kTopBar = 80;        // two toolbar rows
+const int kTopBar = 92;        // two toolbar rows (increased to avoid Y-axis overlap)
 const int kRightPanel = 180;
 const int kBottomBar = 28;     // status-bar strip at the very bottom
 const int kAxisBottom = 38;    // room under the plot for the X tick labels + title
@@ -175,8 +176,11 @@ struct App {
 
     bool visual_smooth = false;  // Catmull-Rom spline rendering (data unchanged)
 
-    bool lock_y = false;            // freeze the vertical scale (no auto-fit)
+    bool auto_y = true;            // auto-fit vertical scale (true=auto, false=fixed)
     double y_lock_min = -1.0, y_lock_max = 1.0;
+
+    bool auto_y_amp = true;        // auto-fit amplitude in Hz mode
+    double y_amp_max = 1.0;        // locked amplitude max in Hz mode
 
     bool measure_mode = false;
     bool snap_to_data = true;       // snap markers to the nearest real sample
@@ -209,7 +213,7 @@ struct App {
     HWND main = nullptr;
     HWND open = nullptr, savepng = nullptr, savecsv = nullptr, mode = nullptr;
     HWND play = nullptr, measure = nullptr;
-    HWND reset = nullptr, locky = nullptr, ptsettings = nullptr;
+    HWND reset = nullptr, autoy = nullptr, ptsettings = nullptr;
     HWND status = nullptr;
     std::vector<HWND> checks;
     std::vector<HWND> buttons;   // owner-drawn toolbar buttons
@@ -234,7 +238,7 @@ struct App {
 App g;
 ULONG_PTR g_gdiplus_token = 0;
 
-// ---- undo system --------------------------------------------------------
+// ---- undo / redo system ------------------------------------------------
 struct UndoAction {
     enum Type { NONE, ADD_POINT, ADD_LINE, ADD_MARKER, CLEAR_POINTS, CLEAR_LINES, CLEAR_MARKERS } type = NONE;
     std::pair<double, double> point;
@@ -245,38 +249,86 @@ struct UndoAction {
     std::vector<App::Marker> saved_markers;
 };
 std::vector<UndoAction> g_undo;
+std::vector<UndoAction> g_redo;
 
-void push_undo(const UndoAction& a) { g_undo.push_back(a); }
+void push_undo(const UndoAction& a) {
+    g_undo.push_back(a);
+    g_redo.clear(); // new action clears redo stack
+}
 void pop_undo() {
     if (g_undo.empty()) return;
     UndoAction a = g_undo.back();
     g_undo.pop_back();
     switch (a.type) {
         case UndoAction::ADD_POINT:
-            if (!g.points.empty()) g.points.pop_back();
+            if (!g.points.empty()) {
+                g_redo.push_back(a);
+                g.points.pop_back();
+            }
             break;
         case UndoAction::ADD_LINE: {
             auto it = std::find_if(g.guides.begin(), g.guides.end(), [&](const GuideLine& gl) {
                 return gl.vertical == a.line.vertical && gl.value == a.line.value && gl.freq == a.line.freq;
             });
-            if (it != g.guides.end()) g.guides.erase(it);
+            if (it != g.guides.end()) {
+                g_redo.push_back(a);
+                g.guides.erase(it);
+            }
             break;
         }
         case UndoAction::ADD_MARKER: {
             auto it = std::find_if(g.markers.begin(), g.markers.end(), [&](const App::Marker& m) {
                 return m.x == a.marker.x && m.freq == a.marker.freq && m.label == a.marker.label;
             });
-            if (it != g.markers.end()) g.markers.erase(it);
+            if (it != g.markers.end()) {
+                g_redo.push_back(a);
+                g.markers.erase(it);
+            }
             break;
         }
         case UndoAction::CLEAR_POINTS:
+            g_redo.push_back(a);
             g.points = a.saved_points;
             break;
         case UndoAction::CLEAR_LINES:
+            g_redo.push_back(a);
             g.guides = a.saved_lines;
             break;
         case UndoAction::CLEAR_MARKERS:
+            g_redo.push_back(a);
             g.markers = a.saved_markers;
+            break;
+        default: break;
+    }
+}
+void pop_redo() {
+    if (g_redo.empty()) return;
+    UndoAction a = g_redo.back();
+    g_redo.pop_back();
+    switch (a.type) {
+        case UndoAction::ADD_POINT:
+            g.points.push_back(a.point);
+            g_undo.push_back(a);
+            break;
+        case UndoAction::ADD_LINE:
+            g.guides.push_back(a.line);
+            g_undo.push_back(a);
+            break;
+        case UndoAction::ADD_MARKER:
+            g.markers.push_back(a.marker);
+            g_undo.push_back(a);
+            break;
+        case UndoAction::CLEAR_POINTS:
+            g_undo.push_back(a);
+            g.points.clear();
+            break;
+        case UndoAction::CLEAR_LINES:
+            g_undo.push_back(a);
+            g.guides.clear();
+            break;
+        case UndoAction::CLEAR_MARKERS:
+            g_undo.push_back(a);
+            g.markers.clear();
             break;
         default: break;
     }
@@ -323,7 +375,7 @@ void set_status() {
                  L"Время  |  Каналов: %zu  |  Точек: %zu  |  Окно: %.5g .. %.5g c  |  Y: ",
                  g.ds.channel_count(), g.ds.rows(), g.win_start, g.win_end);
         s = buf;
-        s += g.lock_y ? L"фикс." : L"авто";
+        s += g.auto_y ? L"авто" : L"фикс.";
         if (g.visual_smooth) s += L" (+сплайн)";
     }
     if (has_data()) {
@@ -416,7 +468,7 @@ void layout() {
     place(g.measure, 120, 8);
     x = 8;
     place(g.reset, 120, 42);
-    place(g.locky, 150, 42);
+    place(g.autoy, 150, 42);
     place(g.ptsettings, 170, 42);
 
     const int panel_x = cw - kRightPanel + 12;
@@ -492,7 +544,7 @@ void zoom_y_at(double center_frac, double factor) {
     if (!has_data()) return;
     double ymin, ymax;
     current_time_yrange(ymin, ymax);
-    if (g.lock_y) { ymin = g.y_lock_min; ymax = g.y_lock_max; }
+    if (!g.auto_y) { ymin = g.y_lock_min; ymax = g.y_lock_max; }
     const double w = ymax - ymin;
     if (w <= 0) return;
     const double c = ymin + w * center_frac;
@@ -503,9 +555,32 @@ void zoom_y_at(double center_frac, double factor) {
     double nhi = nlo + nw;
     g.y_lock_min = nlo;
     g.y_lock_max = nhi;
-    g.lock_y = true;
-    if (g.locky) { SendMessageW(g.locky, BM_SETCHECK, BST_CHECKED, 0); InvalidateRect(g.locky, nullptr, FALSE); }
+    g.auto_y = false;
+    if (g.autoy) { SendMessageW(g.autoy, BM_SETCHECK, BST_UNCHECKED, 0); InvalidateRect(g.autoy, nullptr, FALSE); }
     sync_menu();
+    set_status();
+    InvalidateRect(g.main, nullptr, TRUE);
+}
+
+void zoom_y_amp_at(double center_frac, double factor) {
+    if (!g.spec_valid || g.spec.amp.empty()) return;
+    double ymax = 0.0;
+    for (std::size_t j = 0; j < g.spec.amp.size(); ++j) {
+        int ci = channel_index_by_name(g.spec.names[j]);
+        if (ci < 0 || !g.visible[ci]) continue;
+        for (auto v : g.spec.amp[j]) if (v > ymax) ymax = v;
+    }
+    if (ymax <= 0) ymax = 1.0;
+    double ytop = ymax * 1.08;
+    if (!g.auto_y_amp) ytop = g.y_amp_max;
+    const double w = ytop;
+    if (w <= 0) return;
+    const double c = w * center_frac;
+    double nw = w * factor;
+    const double minw = std::max(1e-12, w * 1e-6);
+    if (nw < minw) nw = minw;
+    g.y_amp_max = nw;
+    g.auto_y_amp = false;
     set_status();
     InvalidateRect(g.main, nullptr, TRUE);
 }
@@ -535,7 +610,7 @@ void reset_view() {
 void stop_play() {
     g.playing = false;
     KillTimer(g.main, 1);
-    if (g.play) SetWindowTextW(g.play, L"▶ Воспроизв.");
+    if (g.play) SetWindowTextW(g.play, L"▶ Play");
 }
 
 void start_play() {
@@ -548,7 +623,7 @@ void start_play() {
     g.play_anchor_data = g.playhead;
     QueryPerformanceCounter(&g.play_anchor_qpc);
     SetTimer(g.main, 1, 16, nullptr);   // ~60 fps for smooth scrolling
-    if (g.play) SetWindowTextW(g.play, L"⏸ Пауза");
+    if (g.play) SetWindowTextW(g.play, L"⏸ Pause");
 }
 
 void toggle_play() {
@@ -558,8 +633,41 @@ void toggle_play() {
 
 // ---- loading -------------------------------------------------------------
 
+static HWND g_loading_wnd = nullptr;
+
+void show_loading(const std::wstring& msg) {
+    if (g_loading_wnd) { DestroyWindow(g_loading_wnd); g_loading_wnd = nullptr; }
+    HINSTANCE inst = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(g.main, GWLP_HINSTANCE));
+    g_loading_wnd = CreateWindowExW(
+        WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+        L"Static", msg.c_str(),
+        WS_POPUP | WS_VISIBLE | SS_CENTER | SS_CENTERIMAGE | WS_BORDER,
+        0, 0, 300, 90, g.main, nullptr, inst, nullptr);
+    if (!g_loading_wnd) return;
+    HFONT font = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    if (font) SendMessageW(g_loading_wnd, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+    RECT mr, wr;
+    GetWindowRect(g.main, &mr);
+    GetWindowRect(g_loading_wnd, &wr);
+    SetWindowPos(g_loading_wnd, HWND_TOPMOST,
+                 mr.left + ((mr.right - mr.left) - (wr.right - wr.left)) / 2,
+                 mr.top + ((mr.bottom - mr.top) - (wr.bottom - wr.top)) / 2,
+                 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+    UpdateWindow(g_loading_wnd);
+}
+
+void hide_loading() {
+    if (g_loading_wnd) { DestroyWindow(g_loading_wnd); g_loading_wnd = nullptr; }
+}
+
 bool load_path(const std::wstring& wpath) {
+    show_loading(L"Загрузка файла...\nПодождите");
+    SetCursor(LoadCursor(nullptr, IDC_WAIT));
     lvm::Dataset ds = lvm::read_lvm_file(to_acp(wpath.c_str()));
+    SetCursor(LoadCursor(nullptr, IDC_ARROW));
+    hide_loading();
     if (!ds.ok) { g.last_error = ds.error; return false; }
 
     const std::vector<double> raw_time = ds.time;
@@ -578,12 +686,13 @@ bool load_path(const std::wstring& wpath) {
     g.guides.clear();
     g.markers.clear();
     g_undo.clear();
+    g_redo.clear();
     stop_play();
     g.playhead = g.data_t0;
     g.playhead_active = false;
-    g.lock_y = false;   // a fresh file starts on auto-fit
-    if (g.locky) { SendMessageW(g.locky, BM_SETCHECK, BST_UNCHECKED, 0); InvalidateRect(g.locky, nullptr, FALSE); }
-    if (g.menu) CheckMenuItem(g.menu, IDC_LOCKY, MF_BYCOMMAND | MF_UNCHECKED);
+    g.auto_y = true;   // a fresh file starts on auto-fit
+    if (g.autoy) { SendMessageW(g.autoy, BM_SETCHECK, BST_CHECKED, 0); InvalidateRect(g.autoy, nullptr, FALSE); }
+    if (g.menu) CheckMenuItem(g.menu, IDC_AUTOY, MF_BYCOMMAND | MF_CHECKED);
 
     compute_spectrum();
     g.freq_start = 0.0;
@@ -592,6 +701,7 @@ bool load_path(const std::wstring& wpath) {
     const wchar_t* base = wcsrchr(wpath.c_str(), L'\\');
     g.file_name = base ? base + 1 : wpath;
     SetWindowTextW(g.main, (L"LVM Viewer — " + g.file_name).c_str());
+    if (g.welcome_wnd) ShowWindow(g.welcome_wnd, SW_HIDE);
 
     rebuild_checks();
     layout();
@@ -1021,7 +1131,7 @@ void draw_time(HDC dc, const RECT& p) {
     // Vertical range: auto-fit to the visible window, or frozen when locked.
     double ymin, ymax;
     current_time_yrange(ymin, ymax);
-    if (g.lock_y) { ymin = g.y_lock_min; ymax = g.y_lock_max; }
+    if (!g.auto_y) { ymin = g.y_lock_min; ymax = g.y_lock_max; }
 
     draw_axes(dc, p, g.win_start, g.win_end, ymin, ymax, L"Время, c");
 
@@ -1148,7 +1258,8 @@ void draw_freq(HDC dc, const RECT& p) {
             if (g.spec.amp[j][k] > ymax) ymax = g.spec.amp[j][k];
     }
     if (ymax <= 0) ymax = 1;
-    const double ytop = ymax * 1.08;
+    double ytop = ymax * 1.08;
+    if (!g.auto_y_amp) ytop = g.y_amp_max;
 
     draw_axes(dc, p, f0, f1, 0, ytop, L"Частота, Гц");
 
@@ -1251,13 +1362,6 @@ void on_paint(HDC hdc) {
     SetTextAlign(mem, TA_LEFT | TA_TOP);
     SelectObject(mem, g.bold_font ? g.bold_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT)));
     TextOutW(mem, cw - kRightPanel + 12, kTopBar + 10, L"Каналы", 6);
-    // Accent underline under "Каналы"
-    HPEN accent = CreatePen(PS_SOLID, 2, kAccent);
-    oldpen = SelectObject(mem, accent);
-    MoveToEx(mem, cw - kRightPanel + 12, kTopBar + 10 + 18, nullptr);
-    LineTo(mem, cw - kRightPanel + 12 + 52, kTopBar + 10 + 18);
-    SelectObject(mem, oldpen);
-    DeleteObject(accent);
 
     // Draw colored channel indicators next to checkboxes
     for (std::size_t i = 0; i < g.checks.size(); ++i) {
@@ -1500,26 +1604,27 @@ void snap_to_nearest(double& dx, double& dy) {
 void show_hotkeys() {
     MessageBoxW(g.main,
         L"Файлы\n"
-        L"  O / Ctrl+O\t— Открыть файл\n"
-        L"  S / Ctrl+S\t— Сохранить PNG\n"
-        L"  E / Ctrl+E\t— Сохранить CSV\n\n"
+        L"  O / Ctrl+O\t— Открыть\n"
+        L"  S / Ctrl+S\t— PNG\n"
+        L"  E / Ctrl+E\t— CSV\n"
+        L"  Ctrl+Z\t— Отменить\n"
+        L"  Ctrl+Shift+Z\t— Повторить\n\n"
         L"Вид\n"
-        L"  M\t— Переключить Время / Гц\n"
-        L"  C\t— Визуальное сглаживание (сплайн)\n"
+        L"  M\t— Время/Гц\n"
+        L"  C\t— Сглаживание\n"
         L"  + / ↑\t— Увеличить\n"
         L"  − / ↓\t— Уменьшить\n"
-        L"  ← / →\t— Сдвиг влево / вправо\n"
-        L"  Home\t— Сбросить вид\n"
-        L"  Пробел\t— Воспроизведение / Пауза\n\n"
+        L"  ← / →\t— Сдвиг влево/вправо\n"
+        L"  Home\t— Сброс\n"
+        L"  Пробел\t— Play / Pause\n\n"
         L"Линии и маркеры\n"
-        L"  L\t— Добавить вертикальную линию\n"
-        L"  H\t— Добавить горизонтальную линию\n"
-        L"  K\t— Добавить маркер\n"
-        L"  Esc\t— Отменить добавление линии/маркера\n\n"
-        L"Измерения\n"
-        L"  V\t— Режим измерения вкл/выкл\n"
-        L"  Delete\t— Очистить точки измерения\n"
-        L"  Ctrl+Z\t— Отменить последнее действие\n\n"
+        L"  L\t— Вертикальная линия\n"
+        L"  H\t— Горизонтальная линия\n"
+        L"  K\t— Маркер\n"
+        L"  Esc\t— Отменить добавление\n\n"
+        L"Точки\n"
+        L"  V\t— Режим точек вкл/выкл\n"
+        L"  Delete\t— Очистить точки\n\n"
         L"Мышь\n"
         L"  Колесо\t— Масштаб под курсором\n"
         L"  Shift+колесо\t— Прокрутка влево/вправо\n"
@@ -1527,7 +1632,7 @@ void show_hotkeys() {
         L"  Alt+колесо\t— Точный масштаб (X)\n"
         L"  ЛКМ + тяга\t— Панорамирование\n"
         L"  ЛКМ\t— Поставить точку / линию / маркер (в режиме)\n"
-        L"  ПКМ\t— Очистить точки измерения\n\n"
+        L"  ПКМ\t— Очистить точки\n\n"
         L"  F1\t— Эта справка",
         L"Горячие клавиши — LVM Viewer", MB_OK | MB_ICONINFORMATION);
 }
@@ -1552,7 +1657,7 @@ void sync_menu() {
     };
     chk(IDM_VISMOOTH, g.visual_smooth);
     chk(IDC_MEASURE, g.measure_mode);
-    chk(IDC_LOCKY, g.lock_y);
+    chk(IDC_AUTOY, g.auto_y);
 }
 
 HMENU make_menu() {
@@ -1562,6 +1667,9 @@ HMENU make_menu() {
     AppendMenuW(file, MF_STRING, IDC_OPEN, L"Открыть файл…\tCtrl+O");
     AppendMenuW(file, MF_STRING, IDC_SAVEPNG, L"Сохранить PNG…\tCtrl+S");
     AppendMenuW(file, MF_STRING, IDC_SAVECSV, L"Сохранить CSV…\tCtrl+E");
+    AppendMenuW(file, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(file, MF_STRING, IDM_UNDO, L"Отменить\tCtrl+Z");
+    AppendMenuW(file, MF_STRING, IDM_REDO, L"Повторить\tCtrl+Shift+Z");
     AppendMenuW(file, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(file, MF_STRING, IDM_EXIT, L"Выход\tAlt+F4");
     AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(file), L"Файл");
@@ -1573,9 +1681,9 @@ HMENU make_menu() {
     AppendMenuW(view, MF_STRING, IDC_ZOOMOUT, L"Уменьшить\t−");
     AppendMenuW(view, MF_STRING, IDC_RESET, L"Сбросить вид\tHome");
     AppendMenuW(view, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(view, MF_STRING, IDC_LOCKY, L"Зафиксировать масштаб Y");
-    AppendMenuW(view, MF_STRING, IDM_VISMOOTH, L"Визуальное сглаживание (сплайн)\tC");
-    AppendMenuW(view, MF_STRING, IDC_PLAY, L"Воспроизведение / Пауза\tПробел");
+    AppendMenuW(view, MF_STRING, IDC_AUTOY, L"Auto Y");
+    AppendMenuW(view, MF_STRING, IDM_VISMOOTH, L"Сглаживание\tC");
+    AppendMenuW(view, MF_STRING, IDC_PLAY, L"Play / Pause\tПробел");
     HMENU speed = CreatePopupMenu();
     AppendMenuW(speed, MF_STRING, IDM_SPEED_00001, L"0.0001×");
     AppendMenuW(speed, MF_STRING, IDM_SPEED_0001, L"0.001×");
@@ -1586,27 +1694,27 @@ HMENU make_menu() {
     AppendMenuW(speed, MF_STRING, IDM_SPEED_2, L"2×");
     AppendMenuW(speed, MF_STRING, IDM_SPEED_5, L"5×");
     AppendMenuW(speed, MF_STRING, IDM_SPEED_10, L"10×");
-    AppendMenuW(view, MF_POPUP, reinterpret_cast<UINT_PTR>(speed), L"Скорость воспроизведения");
+    AppendMenuW(view, MF_POPUP, reinterpret_cast<UINT_PTR>(speed), L"Скорость");
     AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(view), L"Вид");
 
     HMENU meas = CreatePopupMenu();
-    AppendMenuW(meas, MF_STRING, IDC_MEASURE, L"Режим измерения\tV");
-    AppendMenuW(meas, MF_STRING, IDC_PTSETTINGS, L"Настройки точек…");
+    AppendMenuW(meas, MF_STRING, IDC_MEASURE, L"Точки\tV");
+    AppendMenuW(meas, MF_STRING, IDC_PTSETTINGS, L"Настройки…");
     AppendMenuW(meas, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(meas, MF_STRING, IDM_CLEAR_POINTS, L"Очистить точки\tDelete");
-    AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(meas), L"Измерения");
+    AppendMenuW(meas, MF_STRING, IDM_CLEAR_POINTS, L"Очистить\tDelete");
+    AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(meas), L"Точки");
 
     HMENU lines = CreatePopupMenu();
-    AppendMenuW(lines, MF_STRING, IDM_ADD_VLINE, L"Добавить вертикальную линию\tL");
-    AppendMenuW(lines, MF_STRING, IDM_ADD_HLINE, L"Добавить горизонтальную линию\tH");
+    AppendMenuW(lines, MF_STRING, IDM_ADD_VLINE, L"Вертикальная\tL");
+    AppendMenuW(lines, MF_STRING, IDM_ADD_HLINE, L"Горизонтальная\tH");
     AppendMenuW(lines, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(lines, MF_STRING, IDM_CLEAR_LINES, L"Очистить линии");
+    AppendMenuW(lines, MF_STRING, IDM_CLEAR_LINES, L"Очистить");
     AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(lines), L"Линии");
 
     HMENU markers = CreatePopupMenu();
-    AppendMenuW(markers, MF_STRING, IDM_ADD_MARKER, L"Добавить маркер\tK");
+    AppendMenuW(markers, MF_STRING, IDM_ADD_MARKER, L"Добавить\tK");
     AppendMenuW(markers, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(markers, MF_STRING, IDM_CLEAR_MARKERS, L"Очистить маркеры");
+    AppendMenuW(markers, MF_STRING, IDM_CLEAR_MARKERS, L"Очистить");
     AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(markers), L"Маркеры");
 
     HMENU help = CreatePopupMenu();
@@ -1776,10 +1884,10 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case WM_COMMAND:
             switch (LOWORD(wp)) {
-                case IDC_OPEN: DestroyWindow(hwnd); SendMessageW(g.main, WM_COMMAND, IDC_OPEN, 0); return 0;
+                case IDC_OPEN: ShowWindow(hwnd, SW_HIDE); SendMessageW(g.main, WM_COMMAND, IDC_OPEN, 0); return 0;
                 case IDC_PTSETTINGS: open_settings(); return 0;
                 case IDM_HOTKEYS: show_hotkeys(); return 0;
-                case IDW_START: DestroyWindow(hwnd); return 0;
+                case IDW_START: ShowWindow(hwnd, SW_HIDE); return 0;
             }
             return 0;
         case WM_DRAWITEM: {
@@ -1827,16 +1935,17 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 void show_welcome(HINSTANCE inst) {
-    g.welcome_wnd = CreateWindowExW(0, L"LvmWelcome", L"LVM Viewer — добро пожаловать",
-        WS_POPUP | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT, CW_USEDEFAULT, 610, 392,
+    if (g.welcome_wnd) { ShowWindow(g.welcome_wnd, SW_SHOW); UpdateWindow(g.welcome_wnd); return; }
+    RECT rc;
+    GetClientRect(g.main, &rc);
+    // Map client rect to screen coordinates for popup positioning
+    POINT pt = {rc.left, rc.top};
+    ClientToScreen(g.main, &pt);
+    g.welcome_wnd = CreateWindowExW(0, L"LvmWelcome", L"",
+        WS_POPUP | WS_VISIBLE,
+        pt.x, pt.y, rc.right, rc.bottom,
         g.main, nullptr, inst, nullptr);
     if (!g.welcome_wnd) return;
-    RECT sr;
-    GetWindowRect(g.welcome_wnd, &sr);
-    const int sw = sr.right - sr.left, sh = sr.bottom - sr.top;
-    SetWindowPos(g.welcome_wnd, HWND_TOP,
-                 (GetSystemMetrics(SM_CXSCREEN) - sw) / 2,
-                 (GetSystemMetrics(SM_CYSCREEN) - sh) / 2, 0, 0, SWP_NOSIZE);
     ShowWindow(g.welcome_wnd, SW_SHOW);
     UpdateWindow(g.welcome_wnd);
 }
@@ -1872,15 +1981,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 g.buttons.push_back(b);
                 return b;
             };
-            g.open = mk(L"Открыть файл", IDC_OPEN, 0);
-            g.savepng = mk(L"Сохранить PNG", IDC_SAVEPNG, 0);
-            g.savecsv = mk(L"Сохранить CSV", IDC_SAVECSV, 0);
-            g.mode = mk(L"Время / Гц", IDC_MODE, 0);
-            g.play = mk(L"▶ Воспроизв.", IDC_PLAY, 0);
-            g.measure = mk(L"Измерение", IDC_MEASURE, 0);
-            g.reset = mk(L"Сбросить вид", IDC_RESET, 0);
-            g.locky = mk(L"Фикс. масштаб Y", IDC_LOCKY, 0);
-            g.ptsettings = mk(L"Настройки точек…", IDC_PTSETTINGS, 0);
+            g.open = mk(L"Открыть", IDC_OPEN, 0);
+            g.savepng = mk(L"PNG", IDC_SAVEPNG, 0);
+            g.savecsv = mk(L"CSV", IDC_SAVECSV, 0);
+            g.mode = mk(L"Время/Гц", IDC_MODE, 0);
+            g.play = mk(L"▶ Play", IDC_PLAY, 0);
+            g.measure = mk(L"Точки", IDC_MEASURE, 0);
+            g.reset = mk(L"Сброс", IDC_RESET, 0);
+            g.autoy = mk(L"Auto Y", IDC_AUTOY, 0);
+            g.ptsettings = mk(L"Настройки", IDC_PTSETTINGS, 0);
 
             g.status = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE,
                                        0, 0, 10, 10, hwnd, nullptr, inst, nullptr);
@@ -1929,7 +2038,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             HDC dc = dis->hDC;
             RECT r = dis->rcItem;
             bool pressed = (dis->itemState & ODS_SELECTED) != 0;
-            bool is_toggle = (btn == g.measure || btn == g.locky);
+            bool is_toggle = (btn == g.measure || btn == g.autoy);
             bool active = is_toggle && (SendMessageW(btn, BM_GETCHECK, 0, 0) == BST_CHECKED);
             bool hover = (btn == g.hovered_btn);
 
@@ -2018,7 +2127,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     }
                 }
                 set_status();
-                InvalidateRect(hwnd, nullptr, FALSE);
+                RECT pr = plot_rect();
+                RECT rc; GetClientRect(hwnd, &rc);
+                pr.bottom = rc.bottom; // include status bar
+                InvalidateRect(hwnd, &pr, FALSE);
             }
             return 0;
         case WM_COMMAND: {
@@ -2046,12 +2158,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     set_status();
                     return 0;
                 case IDC_PTSETTINGS: open_settings(); return 0;
-                case IDC_LOCKY:
-                    g.lock_y = !g.lock_y;
-                    if (g.lock_y) current_time_yrange(g.y_lock_min, g.y_lock_max);
-                    SendMessageW(g.locky, BM_SETCHECK,
-                                 g.lock_y ? BST_CHECKED : BST_UNCHECKED, 0);
-                    InvalidateRect(g.locky, nullptr, FALSE);
+                case IDC_AUTOY:
+                    g.auto_y = !g.auto_y;
+                    if (!g.auto_y) current_time_yrange(g.y_lock_min, g.y_lock_max);
+                    SendMessageW(g.autoy, BM_SETCHECK,
+                                 g.auto_y ? BST_CHECKED : BST_UNCHECKED, 0);
+                    InvalidateRect(g.autoy, nullptr, FALSE);
                     sync_menu();
                     set_status();
                     InvalidateRect(hwnd, nullptr, TRUE);
@@ -2118,6 +2230,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     InvalidateRect(hwnd, nullptr, FALSE);
                     set_status();
                     return 0;
+                case IDM_REDO:
+                    pop_redo();
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                    set_status();
+                    return 0;
                 case IDC_ZOOMIN: zoom_at(0.5, 0.7); return 0;
                 case IDC_ZOOMOUT: zoom_at(0.5, 1.0 / 0.7); return 0;
                 case IDC_RESET: reset_view(); return 0;
@@ -2168,11 +2285,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
             if (ctrl) {
-                if (in_plot) {
-                    double frac = static_cast<double>(p.bottom - pt.y) / (p.bottom - p.top);
-                    zoom_y_at(frac, up ? 0.85 : 1.0 / 0.85);
+                if (g.freq_mode) {
+                    if (in_plot) {
+                        double frac = static_cast<double>(p.bottom - pt.y) / (p.bottom - p.top);
+                        zoom_y_amp_at(frac, up ? 0.85 : 1.0 / 0.85);
+                    } else {
+                        zoom_y_amp_at(0.5, up ? 0.85 : 1.0 / 0.85);
+                    }
                 } else {
-                    zoom_y_at(0.5, up ? 0.85 : 1.0 / 0.85);
+                    if (in_plot) {
+                        double frac = static_cast<double>(p.bottom - pt.y) / (p.bottom - p.top);
+                        zoom_y_at(frac, up ? 0.85 : 1.0 / 0.85);
+                    } else {
+                        zoom_y_at(0.5, up ? 0.85 : 1.0 / 0.85);
+                    }
                 }
                 return 0;
             }
@@ -2323,6 +2449,7 @@ HACCEL make_accelerators() {
         {FVIRTKEY, 'K', IDM_ADD_MARKER},
         {FVIRTKEY, VK_DELETE, IDM_CLEAR_POINTS},
         {FVIRTKEY | FCONTROL, 'Z', IDM_UNDO},
+        {FVIRTKEY | FCONTROL | FSHIFT, 'Z', IDM_REDO},
         {FVIRTKEY, VK_F1, IDM_HOTKEYS},
     };
     return CreateAcceleratorTableW(acc, static_cast<int>(sizeof(acc) / sizeof(acc[0])));
