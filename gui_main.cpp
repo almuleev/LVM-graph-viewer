@@ -108,7 +108,7 @@ enum {
     IDC_CHAN_BASE = 2000,
 };
 
-const int kTopBar = 52;        // compact single-row toolbar
+const int kTopBar = 72;        // two-row compact toolbar
 const int kRightPanel = 180;
 const int kBottomBar = 28;     // status-bar strip at the very bottom
 const int kAxisBottom = 38;    // room under the plot for the X tick labels + title
@@ -123,10 +123,11 @@ COLORREF channel_color(std::size_t i) { return kPalette[i % (sizeof(kPalette) / 
 
 struct Theme {
     COLORREF bg_main, bg_toolbar, bg_panel, bg_plot, bg_status;
-    COLORREF grid, frame, axis_text;
+    COLORREF grid, minor_grid, frame, axis_text;
     COLORREF text_primary, text_secondary;
     COLORREF accent, accent_hover, separator;
     COLORREF btn_bg, btn_border, btn_hover, btn_active;
+    COLORREF btn_pressed; // "pressed" look for active toggle buttons
     COLORREF playhead;
     COLORREF marker_color;
 };
@@ -138,6 +139,7 @@ static const Theme kLightTheme = {
     RGB(255, 255, 255),   // bg_plot
     RGB(245, 247, 250),   // bg_status
     RGB(230, 235, 240),   // grid
+    RGB(240, 243, 246),   // minor_grid
     RGB(180, 190, 200),   // frame
     RGB(80, 90, 100),     // axis_text
     RGB(30, 40, 50),      // text_primary
@@ -149,6 +151,7 @@ static const Theme kLightTheme = {
     RGB(200, 208, 218),   // btn_border
     RGB(230, 235, 242),   // btn_hover
     RGB(0, 120, 212),     // btn_active
+    RGB(210, 215, 220),   // btn_pressed
     RGB(220, 40, 40),     // playhead
     RGB(200, 0, 0),       // marker_color
 };
@@ -160,6 +163,7 @@ static const Theme kDarkTheme = {
     RGB(25, 28, 35),      // bg_plot
     RGB(35, 38, 45),      // bg_status
     RGB(55, 60, 70),      // grid
+    RGB(40, 44, 52),      // minor_grid
     RGB(80, 85, 95),      // frame
     RGB(180, 185, 190),   // axis_text
     RGB(220, 225, 230),   // text_primary
@@ -171,6 +175,7 @@ static const Theme kDarkTheme = {
     RGB(75, 80, 90),      // btn_border
     RGB(70, 75, 85),      // btn_hover
     RGB(0, 150, 255),     // btn_active
+    RGB(45, 50, 60),      // btn_pressed
     RGB(255, 60, 60),     // playhead
     RGB(255, 80, 80),     // marker_color
 };
@@ -273,7 +278,7 @@ struct App {
     HFONT bold_font = nullptr;   // semibold for headings
     HFONT title_font = nullptr;  // large font for the welcome title
     HFONT axis_font = nullptr;   // 11px for axis tick labels
-    HFONT icon_font = nullptr;   // 18px for toolbar button icons
+    // icon_font removed — toolbar now uses text labels with ui_font
 
     bool dragging = false;
     int drag_x = 0;
@@ -282,6 +287,10 @@ struct App {
 
 App g;
 ULONG_PTR g_gdiplus_token = 0;
+
+struct LegendItem { int channel; RECT rect; };
+std::vector<LegendItem> g_legend_items;
+RECT g_legend_box = {0,0,0,0};
 
 // ---- undo / redo system ------------------------------------------------
 struct UndoAction {
@@ -499,21 +508,25 @@ void layout() {
 
     g.toolbar_seps.clear();
     int x = 8;
-    auto place = [&](HWND h, int w) { MoveWindow(h, x, 8, w, 36, TRUE); x += w + 4; };
+    auto place = [&](HWND h, int w, int row_y) { MoveWindow(h, x, row_y, w, 28, TRUE); x += w + 4; };
     auto sep = [&]() { g.toolbar_seps.push_back(x + 2); x += 8; };
+
+    // Row 1
     x = 8;
-    place(g.open, 40);
-    place(g.savepng, 40);
-    place(g.savecsv, 40);
+    place(g.open, 100, 8);
+    place(g.savepng, 60, 8);
+    place(g.savecsv, 60, 8);
     sep();
-    place(g.mode, 40);
-    place(g.play, 40);
+    place(g.mode, 100, 8);
+    place(g.play, 80, 8);
+
+    // Row 2
+    x = 8;
+    place(g.measure, 80, 40);
+    place(g.reset, 80, 40);
+    place(g.autoy, 90, 40);
     sep();
-    place(g.measure, 40);
-    place(g.reset, 40);
-    place(g.autoy, 40);
-    sep();
-    place(g.ptsettings, 40);
+    place(g.ptsettings, 110, 40);
 
     const int panel_x = cw - kRightPanel + 12;
     int y = kTopBar + 28;
@@ -661,7 +674,7 @@ void reset_view() {
 void stop_play() {
     g.playing = false;
     KillTimer(g.main, 1);
-    if (g.play) SetWindowTextW(g.play, L"\u25B6");
+    if (g.play) SetWindowTextW(g.play, L"▶ Play");
 }
 
 void start_play() {
@@ -674,7 +687,7 @@ void start_play() {
     g.play_anchor_data = g.playhead;
     QueryPerformanceCounter(&g.play_anchor_qpc);
     SetTimer(g.main, 1, 16, nullptr);   // ~60 fps for smooth scrolling
-    if (g.play) SetWindowTextW(g.play, L"\u23F8");
+    if (g.play) SetWindowTextW(g.play, L"⏸ Пауза");
 }
 
 void toggle_play() {
@@ -853,6 +866,22 @@ void draw_axes(HDC dc, const RECT& p, double x0, double x1, double y0, double y1
         TextOutW(dc, p.left - 8, py, buf, lstrlenW(buf));
     }
 
+    HPEN minor = CreatePen(PS_SOLID, 1, g_theme->minor_grid);
+    HGDIOBJ old_minor = SelectObject(dc, minor);
+    for (int i = 0; i < ticks; ++i) {
+        const double f0 = static_cast<double>(i) / ticks;
+        const double f1 = static_cast<double>(i + 1) / ticks;
+        for (int j = 1; j <= 4; ++j) {
+            const double f = f0 + (f1 - f0) * j / 5.0;
+            const int px = p.left + static_cast<int>(f * (p.right - p.left));
+            const int py = p.bottom - static_cast<int>(f * (p.bottom - p.top));
+            MoveToEx(dc, px, p.top, nullptr); LineTo(dc, px, p.bottom);
+            MoveToEx(dc, p.left, py, nullptr); LineTo(dc, p.right, py);
+        }
+    }
+    SelectObject(dc, old_minor);
+    DeleteObject(minor);
+
     SelectObject(dc, frame);
     Rectangle(dc, p.left, p.top, p.right, p.bottom);
     draw_text(dc, (p.left + p.right) / 2, p.bottom + 20, xlabel, TA_CENTER | TA_TOP);
@@ -867,29 +896,27 @@ void draw_legend(HDC dc, const RECT& p) {
     int item_h = 16;
     int pad = 6;
     int max_width = 0;
-    int visible_count = 0;
+    int ch_count = static_cast<int>(g.ds.channel_count());
+    if (ch_count == 0) return;
 
     HFONT leg_font = g.axis_font ? g.axis_font : g.ui_font;
     HGDIOBJ old_font = SelectObject(dc, leg_font);
     SetBkMode(dc, TRANSPARENT);
 
-    for (std::size_t i = 0; i < g.ds.channel_count(); ++i) {
-        if (!g.visible[i]) continue;
-        visible_count++;
+    for (int i = 0; i < ch_count; ++i) {
         std::wstring nm = to_w(g.ds.names[i]);
         SIZE sz;
         GetTextExtentPoint32W(dc, nm.c_str(), static_cast<int>(nm.size()), &sz);
         if (sz.cx > max_width) max_width = sz.cx;
     }
-    if (visible_count == 0) {
-        SelectObject(dc, old_font);
-        return;
-    }
 
     int box_w = 14 + 4 + max_width + pad * 2;
-    int box_h = visible_count * item_h + pad * 2;
+    int box_h = ch_count * item_h + pad * 2;
     int box_x = p.right - box_w - 14;
     int box_y = p.bottom - box_h - 14;
+
+    g_legend_box = {box_x, box_y, box_x + box_w, box_y + box_h};
+    g_legend_items.clear();
 
     // Draw themed rounded background with border
     HBRUSH bg = CreateSolidBrush(g_theme->bg_plot);
@@ -903,9 +930,16 @@ void draw_legend(HDC dc, const RECT& p) {
     DeleteObject(bg);
 
     int y = box_y + pad;
-    for (std::size_t i = 0; i < g.ds.channel_count(); ++i) {
-        if (!g.visible[i]) continue;
-        HBRUSH cb = CreateSolidBrush(channel_color(i));
+    for (int i = 0; i < ch_count; ++i) {
+        bool vis = g.visible[i];
+        COLORREF col = channel_color(i);
+        if (!vis) {
+            // Dim the color for hidden channels (average toward gray)
+            col = RGB((GetRValue(col) + 180) / 2,
+                      (GetGValue(col) + 180) / 2,
+                      (GetBValue(col) + 180) / 2);
+        }
+        HBRUSH cb = CreateSolidBrush(col);
         HGDIOBJ old_b = SelectObject(dc, cb);
         HGDIOBJ old_p = SelectObject(dc, GetStockObject(NULL_PEN));
         RoundRect(dc, box_x + pad, y + 6, box_x + pad + 14, y + 6 + 3, 2, 2);
@@ -913,10 +947,24 @@ void draw_legend(HDC dc, const RECT& p) {
         SelectObject(dc, old_b);
         DeleteObject(cb);
 
-        SetTextColor(dc, g_theme->text_primary);
+        // If hidden, draw a diagonal line through the swatch
+        if (!vis) {
+            HPEN line = CreatePen(PS_SOLID, 1, g_theme->text_secondary);
+            HGDIOBJ old_lp = SelectObject(dc, line);
+            MoveToEx(dc, box_x + pad, y + 6, nullptr);
+            LineTo(dc, box_x + pad + 14, y + 6 + 3);
+            SelectObject(dc, old_lp);
+            DeleteObject(line);
+        }
+
+        SetTextColor(dc, vis ? g_theme->text_primary : g_theme->text_secondary);
         SetTextAlign(dc, TA_LEFT | TA_TOP);
         std::wstring nm = to_w(g.ds.names[i]);
         TextOutW(dc, box_x + pad + 18, y, nm.c_str(), static_cast<int>(nm.size()));
+
+        // Store hit-test rect for this item (full row, for easier clicking)
+        g_legend_items.push_back({i, {box_x, y, box_x + box_w, y + item_h}});
+
         y += item_h;
     }
     SelectObject(dc, old_font);
@@ -944,6 +992,7 @@ void draw_guides(HDC dc) {
     HGDIOBJ oldf = SelectObject(dc, lf);
     SetBkMode(dc, TRANSPARENT);
     wchar_t b[48];
+    HBRUSH wb = CreateSolidBrush(g_theme->bg_plot);
     for (const auto& gl : g.guides) {
         if (gl.freq != g.freq_mode) continue;
         if (gl.vertical) {
@@ -955,10 +1004,8 @@ void draw_guides(HDC dc) {
             SetTextAlign(dc, TA_LEFT | TA_TOP);
             SIZE ts;
             GetTextExtentPoint32W(dc, b, lstrlenW(b), &ts);
-            HBRUSH wb = CreateSolidBrush(g_theme->bg_plot);
             RECT br = {X + 3, p.top + 2, X + 3 + ts.cx + 2, p.top + 2 + ts.cy};
             FillRect(dc, &br, wb);
-            DeleteObject(wb);
             TextOutW(dc, X + 3, p.top + 2, b, lstrlenW(b));
         } else {
             SelectObject(dc, hpen);
@@ -969,13 +1016,12 @@ void draw_guides(HDC dc) {
             SetTextAlign(dc, TA_LEFT | TA_BOTTOM);
             SIZE ts;
             GetTextExtentPoint32W(dc, b, lstrlenW(b), &ts);
-            HBRUSH wb = CreateSolidBrush(g_theme->bg_plot);
             RECT br = {p.left + 4, Y - 2 - ts.cy, p.left + 4 + ts.cx + 2, Y - 2};
             FillRect(dc, &br, wb);
-            DeleteObject(wb);
             TextOutW(dc, p.left + 4, Y - 2, b, lstrlenW(b));
         }
     }
+    DeleteObject(wb);
     SelectObject(dc, oldf);
     SelectObject(dc, old);
     DeleteObject(vpen);
@@ -1000,6 +1046,10 @@ void draw_markers(HDC dc) {
     HFONT mf = g.axis_font ? g.axis_font : g.ui_font;
     HGDIOBJ oldf = SelectObject(dc, mf);
     SetBkMode(dc, TRANSPARENT);
+    HBRUSH wb = CreateSolidBrush(g_theme->bg_plot);
+    HPEN bp = CreatePen(PS_SOLID, 1, g_theme->frame);
+    HGDIOBJ prev_pen = SelectObject(dc, bp);
+    HGDIOBJ prev_brush = SelectObject(dc, wb);
     for (const auto& m : g.markers) {
         if (m.freq != g.freq_mode) continue;
         const int X = mx(m.x);
@@ -1020,18 +1070,14 @@ void draw_markers(HDC dc) {
         GetTextExtentPoint32W(dc, txt, tlen, &ts);
         int tx = X + 3;
         int ty = p.top + 4;
-        HBRUSH wb = CreateSolidBrush(g_theme->bg_plot);
-        HPEN bp = CreatePen(PS_SOLID, 1, g_theme->frame);
-        HGDIOBJ oldp = SelectObject(dc, bp);
-        HGDIOBJ oldb = SelectObject(dc, wb);
         RoundRect(dc, tx - 2, ty - 1, tx + ts.cx + 4, ty + ts.cy + 2, 3, 3);
-        SelectObject(dc, oldp);
-        DeleteObject(bp);
-        SelectObject(dc, oldb);
-        DeleteObject(wb);
         SetTextAlign(dc, TA_LEFT | TA_TOP);
         TextOutW(dc, tx, ty, txt, tlen);
     }
+    SelectObject(dc, prev_pen);
+    DeleteObject(bp);
+    SelectObject(dc, prev_brush);
+    DeleteObject(wb);
     SelectObject(dc, oldf);
     SelectObject(dc, old);
     DeleteObject(pen);
@@ -1071,6 +1117,10 @@ void draw_measure(HDC dc) {
     HGDIOBJ oldf = SelectObject(dc, mf);
     SetBkMode(dc, TRANSPARENT);
     wchar_t b[96];
+    HBRUSH wb = CreateSolidBrush(g_theme->bg_plot);
+    HPEN bp = CreatePen(PS_SOLID, 1, g_theme->frame);
+    HGDIOBJ prev_pen = SelectObject(dc, bp);
+    HGDIOBJ prev_brush = SelectObject(dc, wb);
     for (std::size_t i = 0; i < g.points.size(); ++i) {
         const int X = mx(g.points[i].first), Y = my(g.points[i].second);
         MoveToEx(dc, X - 8, Y, nullptr); LineTo(dc, X + 9, Y);
@@ -1085,16 +1135,8 @@ void draw_measure(HDC dc) {
             SetTextAlign(dc, TA_LEFT | TA_BOTTOM);
             SIZE ts;
             GetTextExtentPoint32W(dc, lab.c_str(), static_cast<int>(lab.size()), &ts);
-            HBRUSH wb = CreateSolidBrush(g_theme->bg_plot);
-            HPEN bp = CreatePen(PS_SOLID, 1, g_theme->frame);
-            HGDIOBJ oldp = SelectObject(dc, bp);
-            HGDIOBJ oldb = SelectObject(dc, wb);
             RoundRect(dc, X + 6, Y - 4 - ts.cy, X + 12 + ts.cx, Y + 2, 3, 3);
-            SelectObject(dc, oldp);
-            DeleteObject(bp);
-            SelectObject(dc, oldb);
-            DeleteObject(wb);
-            TextOutW(dc, X + 8, Y - 2 - ts.cy, lab.c_str(), static_cast<int>(lab.size()));
+            TextOutW(dc, X + 8, Y - 2, lab.c_str(), static_cast<int>(lab.size()));
         }
 
         if (i >= 1) {  // segment read-out at the midpoint
@@ -1117,19 +1159,15 @@ void draw_measure(HDC dc) {
                 SetTextAlign(dc, TA_CENTER | TA_BOTTOM);
                 SIZE ts;
                 GetTextExtentPoint32W(dc, dl.c_str(), static_cast<int>(dl.size()), &ts);
-                HBRUSH wb = CreateSolidBrush(g_theme->bg_plot);
-                HPEN bp = CreatePen(PS_SOLID, 1, g_theme->frame);
-                HGDIOBJ oldp = SelectObject(dc, bp);
-                HGDIOBJ oldb = SelectObject(dc, wb);
                 RoundRect(dc, mxp - ts.cx/2 - 4, myp - 4 - ts.cy, mxp + ts.cx/2 + 6, myp + 2, 3, 3);
-                SelectObject(dc, oldp);
-                DeleteObject(bp);
-                SelectObject(dc, oldb);
-                DeleteObject(wb);
-                TextOutW(dc, mxp, myp - 2 - ts.cy, dl.c_str(), static_cast<int>(dl.size()));
+                TextOutW(dc, mxp, myp - 2, dl.c_str(), static_cast<int>(dl.size()));
             }
         }
     }
+    SelectObject(dc, prev_pen);
+    DeleteObject(bp);
+    SelectObject(dc, prev_brush);
+    DeleteObject(wb);
     SelectObject(dc, oldf);
     SelectObject(dc, old);
     DeleteObject(pp);
@@ -1195,6 +1233,7 @@ void draw_time(HDC dc, const RECT& p) {
     SelectClipRgn(dc, clip);
 
     static std::vector<float> series;
+    static std::vector<float> cmin, cmax;
     const bool sparse = (hi - lo) <= static_cast<std::size_t>(pw) * 2;
 
     for (std::size_t c = 0; c < g.ds.channel_count(); ++c) {
@@ -1242,7 +1281,10 @@ void draw_time(HDC dc, const RECT& p) {
                 DeleteObject(dot);
             }
         } else {
-            std::vector<float> cmin(pw, 1e30f), cmax(pw, -1e30f);
+            cmin.resize(pw, 1e30f);
+            cmax.resize(pw, -1e30f);
+            std::fill(cmin.begin(), cmin.end(), 1e30f);
+            std::fill(cmax.begin(), cmax.end(), -1e30f);
             for (std::size_t i = lo; i < hi; ++i) {
                 const float v = series[i - lo];
                 if (std::isnan(v)) continue;
@@ -1399,11 +1441,11 @@ void on_paint(HDC hdc) {
     SelectObject(mem, oldpen);
     DeleteObject(sep);
 
-    // Toolbar vertical separators (single compact row)
+    // Toolbar vertical separators (two compact rows)
     HPEN vsep = CreatePen(PS_SOLID, 1, g_theme->separator);
     oldpen = SelectObject(mem, vsep);
     for (int sx : g.toolbar_seps) {
-        MoveToEx(mem, sx, 8, nullptr); LineTo(mem, sx, 44);
+        MoveToEx(mem, sx, 8, nullptr); LineTo(mem, sx, kTopBar - 4);
     }
     SelectObject(mem, oldpen);
     DeleteObject(vsep);
@@ -1847,6 +1889,15 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             InvalidateRect(g.main, nullptr, FALSE);
             return 0;
         }
+        case WM_ERASEBKGND: {
+            HDC dc = reinterpret_cast<HDC>(wp);
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            HBRUSH b = CreateSolidBrush(g_theme->bg_panel);
+            FillRect(dc, &rc, b);
+            DeleteObject(b);
+            return 1;
+        }
         case WM_CTLCOLORSTATIC:
         case WM_CTLCOLORBTN: {
             HDC dc = reinterpret_cast<HDC>(wp);
@@ -1914,7 +1965,7 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             auto mkbtn = [&](const wchar_t* t, int id, int x, int w) {
                 HWND b = CreateWindowExW(0, L"BUTTON", t, WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-                                         x, 310, w, 32, hwnd,
+                                         x, 340, w, 32, hwnd,
                                          reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), inst, nullptr);
                 SendMessageW(b, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
             };
@@ -1962,7 +2013,7 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             bool active = is_toggle && (SendMessageW(dis->hwndItem, BM_GETCHECK, 0, 0) == BST_CHECKED);
             COLORREF bg_col, border_col, text_col;
             if (active) {
-                bg_col = g_theme->btn_active; border_col = g_theme->btn_active; text_col = RGB(255,255,255);
+                bg_col = g_theme->btn_pressed; border_col = g_theme->separator; text_col = g_theme->accent;
             } else if (pressed) {
                 bg_col = g_theme->accent_hover; border_col = g_theme->accent_hover; text_col = RGB(255,255,255);
             } else {
@@ -1977,6 +2028,16 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             DeleteObject(border);
             SelectObject(dc, old_brush);
             DeleteObject(bg);
+            // "Pressed" inset effect for active toggle buttons
+            if (active) {
+                HPEN inset = CreatePen(PS_SOLID, 1, g_theme->separator);
+                HGDIOBJ old_ip = SelectObject(dc, inset);
+                HGDIOBJ old_ib = SelectObject(dc, GetStockObject(NULL_BRUSH));
+                Rectangle(dc, r.left + 1, r.top + 1, r.right - 1, r.bottom - 1);
+                SelectObject(dc, old_ib);
+                SelectObject(dc, old_ip);
+                DeleteObject(inset);
+            }
             SetBkMode(dc, TRANSPARENT);
             SetTextColor(dc, text_col);
             HFONT f = g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
@@ -1986,8 +2047,10 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SetTextAlign(dc, TA_CENTER | TA_TOP);
             SIZE sz;
             GetTextExtentPoint32W(dc, txt, lstrlenW(txt), &sz);
+            int tx = (r.left + r.right) / 2;
             int ty = r.top + (r.bottom - r.top - sz.cy) / 2;
-            TextOutW(dc, (r.left + r.right) / 2, ty, txt, lstrlenW(txt));
+            if (active || pressed) { tx += 1; ty += 1; }
+            TextOutW(dc, tx, ty, txt, lstrlenW(txt));
             return TRUE;
         }
         case WM_CTLCOLORSTATIC: {
@@ -2035,9 +2098,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g.ui_font = CreateFontW(-15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                     CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-            g.icon_font = CreateFontW(-18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                                      DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                      CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
             g.bold_font = CreateFontW(-15, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
                                       DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                       CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
@@ -2045,11 +2105,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
             if (!g.ui_font) g.ui_font = reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
-            if (!g.icon_font) g.icon_font = g.ui_font;
             HFONT font = g.ui_font;
 
             g.menu = make_menu();
             SetMenu(hwnd, g.menu);
+            MENUINFO mi = { sizeof(mi) };
+            mi.fMask = MIM_BACKGROUND | MIM_APPLYTOSUBMENUS;
+            mi.hbrBack = CreateSolidBrush(g_theme->bg_toolbar);
+            SetMenuInfo(g.menu, &mi);
 
             auto mk = [&](const wchar_t* text, int id, DWORD extra) {
                 HWND b = CreateWindowExW(0, L"BUTTON", text, WS_CHILD | WS_VISIBLE | BS_OWNERDRAW | extra,
@@ -2059,15 +2122,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 g.buttons.push_back(b);
                 return b;
             };
-            g.open = mk(L"\u229E", IDC_OPEN, 0);
-            g.savepng = mk(L"\u2193", IDC_SAVEPNG, 0);
-            g.savecsv = mk(L"\u21D3", IDC_SAVECSV, 0);
-            g.mode = mk(L"\u223F", IDC_MODE, 0);
-            g.play = mk(L"\u25B6", IDC_PLAY, 0);
-            g.measure = mk(L"\u2295", IDC_MEASURE, 0);
-            g.reset = mk(L"\u2302", IDC_RESET, 0);
-            g.autoy = mk(L"\u21C5", IDC_AUTOY, 0);
-            g.ptsettings = mk(L"\u2261", IDC_PTSETTINGS, 0);
+            g.open = mk(L"Открыть", IDC_OPEN, 0);
+            g.savepng = mk(L"PNG", IDC_SAVEPNG, 0);
+            g.savecsv = mk(L"CSV", IDC_SAVECSV, 0);
+            g.mode = mk(L"Время/Гц", IDC_MODE, 0);
+            g.play = mk(L"▶ Play", IDC_PLAY, 0);
+            g.measure = mk(L"Точки", IDC_MEASURE, 0);
+            g.reset = mk(L"Сброс", IDC_RESET, 0);
+            g.autoy = mk(L"Auto zoom", IDC_AUTOY, 0);
+            g.ptsettings = mk(L"Настройки", IDC_PTSETTINGS, 0);
 
             g.status = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE,
                                        0, 0, 10, 10, hwnd, nullptr, inst, nullptr);
@@ -2128,9 +2191,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             COLORREF bg_col, border_col, text_col;
             if (active) {
-                bg_col = g_theme->btn_active;
-                border_col = g_theme->btn_active;
-                text_col = RGB(255, 255, 255);
+                bg_col = g_theme->btn_pressed;
+                border_col = g_theme->separator;
+                text_col = g_theme->accent;
             } else if (pressed) {
                 bg_col = g_theme->accent_hover;
                 border_col = g_theme->accent_hover;
@@ -2155,17 +2218,30 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SelectObject(dc, old_brush);
             DeleteObject(bg);
 
+            // "Pressed" inset effect for active toggle buttons
+            if (active) {
+                HPEN inset = CreatePen(PS_SOLID, 1, g_theme->separator);
+                HGDIOBJ old_ip = SelectObject(dc, inset);
+                HGDIOBJ old_ib = SelectObject(dc, GetStockObject(NULL_BRUSH));
+                Rectangle(dc, r.left + 1, r.top + 1, r.right - 1, r.bottom - 1);
+                SelectObject(dc, old_ib);
+                SelectObject(dc, old_ip);
+                DeleteObject(inset);
+            }
+
             SetBkMode(dc, TRANSPARENT);
             SetTextColor(dc, text_col);
-            HFONT f = g.icon_font ? g.icon_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+            HFONT f = g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
             SelectObject(dc, f);
             wchar_t txt[128];
             GetWindowTextW(btn, txt, 128);
             SetTextAlign(dc, TA_CENTER | TA_TOP);
             SIZE sz;
             GetTextExtentPoint32W(dc, txt, lstrlenW(txt), &sz);
+            int tx = (r.left + r.right) / 2;
             int ty = r.top + (r.bottom - r.top - sz.cy) / 2;
-            TextOutW(dc, (r.left + r.right) / 2, ty, txt, lstrlenW(txt));
+            if (active || pressed) { tx += 1; ty += 1; }
+            TextOutW(dc, tx, ty, txt, lstrlenW(txt));
             return TRUE;
         }
         case WM_TIMER:
@@ -2275,6 +2351,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 case IDM_THEME:
                     g_theme = (g_theme == &kLightTheme) ? &kDarkTheme : &kLightTheme;
                     update_theme_brushes();
+                    {
+                        MENUINFO mi = { sizeof(mi) };
+                        mi.fMask = MIM_BACKGROUND | MIM_APPLYTOSUBMENUS;
+                        mi.hbrBack = CreateSolidBrush(g_theme->bg_toolbar);
+                        SetMenuInfo(g.menu, &mi);
+                    }
                     sync_menu();
                     if (g.welcome_wnd) InvalidateRect(g.welcome_wnd, nullptr, TRUE);
                     InvalidateRect(hwnd, nullptr, TRUE);
@@ -2424,6 +2506,35 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (!has_data()) return 0;
             const RECT p = plot_rect();
             const int mx = GET_X_LPARAM(lp), my = GET_Y_LPARAM(lp);
+
+            // --- Legend click handling (toggle / solo) ---
+            if (mx >= g_legend_box.left && mx < g_legend_box.right &&
+                my >= g_legend_box.top && my < g_legend_box.bottom) {
+                for (const auto& li : g_legend_items) {
+                    if (mx >= li.rect.left && mx < li.rect.right &&
+                        my >= li.rect.top && my < li.rect.bottom) {
+                        const int ci = li.channel;
+                        if ((GetKeyState(VK_CONTROL) & 0x8000) != 0) {
+                            // Solo: show only this channel
+                            for (std::size_t j = 0; j < g.visible.size(); ++j) {
+                                g.visible[j] = (static_cast<int>(j) == ci);
+                                if (j < g.checks.size())
+                                    SendMessageW(g.checks[j], BM_SETCHECK,
+                                        g.visible[j] ? BST_CHECKED : BST_UNCHECKED, 0);
+                            }
+                        } else {
+                            // Toggle
+                            g.visible[ci] = !g.visible[ci];
+                            if (ci < static_cast<int>(g.checks.size()))
+                                SendMessageW(g.checks[ci], BM_SETCHECK,
+                                    g.visible[ci] ? BST_CHECKED : BST_UNCHECKED, 0);
+                        }
+                        InvalidateRect(hwnd, nullptr, TRUE);
+                        return 0;
+                    }
+                }
+            }
+
             if (mx < p.left || mx > p.right || my < p.top || my > p.bottom) return 0;
             if (g.pending_line) {
                 double dx, dy;
@@ -2519,7 +2630,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             KillTimer(hwnd, 2);
             if (g.ui_font && g.ui_font != reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT)))
                 DeleteObject(g.ui_font);
-            if (g.icon_font && g.icon_font != g.ui_font) DeleteObject(g.icon_font);
             if (g.bold_font) DeleteObject(g.bold_font);
             if (g.title_font) DeleteObject(g.title_font);
             if (g.axis_font) DeleteObject(g.axis_font);
