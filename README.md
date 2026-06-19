@@ -8,13 +8,17 @@ A dependency-free C++ desktop application for viewing LabVIEW `.lvm` / `.txt` si
 
 Two front ends share one parser/FFT library:
 
-- **`lvm_viewer_gui.exe`** — a native Win32 desktop viewer (window, buttons, interactive plot). Latest version: **v0.4.0**.
+- **`lvm_viewer_gui.exe`** — a native Win32 desktop viewer (window, buttons, interactive plot). Latest version: **v0.4.4**.
 - **`lvm_reader.exe`** — a command-line tool (structure, statistics, FFT peaks, CSV export).
 
 The parser is a faithful C++ port of the Python LVM Signal Viewer, and the FFT matches numpy's `rfft` (to ~1e-13). Results match the Python reference on the bundled sample files (verified on a 1 GB / 6.8 M-sample file too).
 
-## GUI Highlights (v0.4.0)
+## GUI Highlights (v0.4.4)
 
+- **Deeper zoom** — zoom in far enough to see individual samples on screen.
+- **Measurement read-outs** — fixed label text so X, Δx, Δy, 1/Δt and distance values display correctly instead of showing the checkbox label.
+- **Filled marker dots** — each measurement point now shows a filled dot in the chosen marker colour.
+- **FFT smoothing** — visual Catmull-Rom spline smoothing now works in FFT (Hz) mode too, not just in Time mode.
 - **i18n** — full English / Russian language switch via the View menu.
 - **Dark theme** — full dark mode including toolbar, menu bar, panel, and settings window (toggle with `T` or View menu).
 - **Interactive legend** — click a legend item to toggle the channel, `Ctrl+Click` to solo (show only that channel).

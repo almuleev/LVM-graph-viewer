@@ -19,7 +19,7 @@ The parser is a faithful C++ port of the Python LVM Signal Viewer, and the FFT m
 
 ## GUI Viewer
 
-A self-contained desktop app drawn with the Win32 API + GDI (no Qt, no DLLs). Latest version: **v0.4.0**.
+A self-contained desktop app drawn with the Win32 API + GDI (no Qt, no DLLs). Latest version: **v0.4.4**.
 
 ### Start Screen
 
@@ -193,3 +193,11 @@ Behaviour mirrors the Python viewer:
 - `run.bat` — double-click / drag-and-drop launcher for the CLI (Windows)
 - `tests/run_tests.cpp` — unit tests (`make test`)
 - `Makefile` — build helper
+
+## Changelog
+
+### v0.4.4
+- Deeper zoom — zoom in far enough to see individual samples.
+- Fixed measurement read-outs: values (X, Δx, Δy, 1/Δt, d) are shown next to points instead of the checkbox label text.
+- Measurement points now display filled dots in the chosen marker colour.
+- Visual smoothing (Catmull-Rom spline) now works in FFT (Hz) mode as well as Time mode.
