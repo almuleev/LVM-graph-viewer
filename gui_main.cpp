@@ -1560,15 +1560,27 @@ void draw_freq(HDC dc, const RECT& p) {
         HPEN pen = CreatePen(PS_SOLID, 1, channel_color(ci));
         HGDIOBJ old = SelectObject(dc, pen);
         const auto& a = g.spec.amp[j];
-        bool started = false;
-        int last_px = -1;
-        for (std::size_t k = klo; k < khi; ++k) {
-            const int px = mapx(f[k]);
-            const int py = mapy(a[k]);
-            if (px == last_px && started) continue;
-            if (!started) { MoveToEx(dc, px, py, nullptr); started = true; }
-            else LineTo(dc, px, py);
-            last_px = px;
+        std::vector<POINT> pts;
+        for (std::size_t k = klo; k < khi; ++k)
+            pts.push_back(POINT{mapx(f[k]), mapy(a[k])});
+        if (g.visual_smooth && pts.size() >= 2) {
+            draw_catmull_rom(dc, pts);
+            // Mark real samples when few are visible.
+            if (pts.size() <= 400) {
+                HBRUSH dot = CreateSolidBrush(channel_color(ci));
+                HGDIOBJ ob = SelectObject(dc, dot);
+                HGDIOBJ opn = SelectObject(dc, GetStockObject(NULL_PEN));
+                for (const auto& pt : pts)
+                    Ellipse(dc, pt.x - 2, pt.y - 2, pt.x + 3, pt.y + 3);
+                SelectObject(dc, opn);
+                SelectObject(dc, ob);
+                DeleteObject(dot);
+            }
+        } else {
+            for (std::size_t k = 0; k < pts.size(); ++k) {
+                if (k == 0) MoveToEx(dc, pts[k].x, pts[k].y, nullptr);
+                else LineTo(dc, pts[k].x, pts[k].y);
+            }
         }
         SelectObject(dc, old);
         DeleteObject(pen);
