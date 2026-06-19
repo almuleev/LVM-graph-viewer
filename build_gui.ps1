@@ -1,4 +1,4 @@
-# Build the native Win32 GUI viewer (lvm_viewer_gui.exe) with MSYS2/MinGW g++.
+# Build the native Win32 GUI viewer (LVM-graph-viewer-vX.Y.Z-win-x64.exe) with MSYS2/MinGW g++.
 # Usage (from this folder):  powershell -ExecutionPolicy Bypass -File build_gui.ps1
 $ErrorActionPreference = "Stop"
 
@@ -9,9 +9,15 @@ if (-not (Get-Command g++ -ErrorAction SilentlyContinue)) {
 
 Set-Location $PSScriptRoot
 
+# Extract version from the latest git tag (e.g. v0.4.4).
+$version = git describe --tags --abbrev=0 2>$null
+if (-not $version) { $version = "v0.0.0" }
+
+$outName = "LVM-graph-viewer-$version-win-x64.exe"
+
 $flags = @(
     "-std=c++17", "-O2", "-municode", "-static", "-mwindows",
-    "-o", "lvm_viewer_gui.exe",
+    "-o", $outName,
     "gui_main.cpp", "lvm_parser.cpp", "fft.cpp", "analysis.cpp",
     "-lcomdlg32", "-lgdi32", "-luser32", "-lgdiplus", "-lcomctl32"
 )
@@ -19,8 +25,8 @@ $flags = @(
 Write-Host "g++ $($flags -join ' ')"
 & g++ @flags
 
-if ($LASTEXITCODE -eq 0 -and (Test-Path lvm_viewer_gui.exe)) {
-    Write-Host "Built lvm_viewer_gui.exe" -ForegroundColor Green
+if ($LASTEXITCODE -eq 0 -and (Test-Path $outName)) {
+    Write-Host "Built $outName" -ForegroundColor Green
 } else {
     Write-Host "Build failed (exit $LASTEXITCODE)" -ForegroundColor Red
     exit 1

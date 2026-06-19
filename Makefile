@@ -4,6 +4,8 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra
 # Static linking keeps the binary self-contained (no libstdc++/libgcc DLLs).
 LDFLAGS  ?= -static
 TARGET   := lvm_reader
+# Extract version from the latest git tag (e.g. v0.4.4).
+VERSION  := $(shell git describe --tags --abbrev=0 2>/dev/null || echo v0.0.0)
 
 # Parser/analysis library shared by the CLI and the tests.
 LIB_SRC  := lvm_parser.cpp fft.cpp analysis.cpp
@@ -14,11 +16,11 @@ HDRS     := lvm_parser.hpp fft.hpp analysis.hpp
 ifeq ($(OS),Windows_NT)
     BIN      := $(TARGET).exe
     TEST_BIN := tests/run_tests.exe
-    GUI_BIN  := lvm_viewer_gui.exe
+    GUI_BIN  := LVM-graph-viewer-$(VERSION)-win-x64.exe
 else
     BIN      := $(TARGET)
     TEST_BIN := tests/run_tests
-    GUI_BIN  := lvm_viewer_gui
+    GUI_BIN  := LVM-graph-viewer-$(VERSION)
 endif
 
 .PHONY: all clean run test gui
