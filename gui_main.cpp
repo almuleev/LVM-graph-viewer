@@ -739,13 +739,13 @@ bool active_axis(double*& lo, double*& hi, double& minb, double& maxb, double& m
         if (!g.spec_valid || g.spec.freqs.size() < 2) return false;
         lo = &g.freq_start; hi = &g.freq_end;
         minb = 0.0; maxb = g.spec.nyquist;
-        minw = (g.spec.freqs[1] - g.spec.freqs[0]) * 4.0;
+        minw = (g.spec.freqs[1] - g.spec.freqs[0]) * 0.5;
         return true;
     }
     if (!has_data()) return false;
     lo = &g.win_start; hi = &g.win_end;
     minb = g.data_t0; maxb = g.data_t1;
-    minw = std::max(g.approx_dt * 4.0, (g.data_t1 - g.data_t0) * 1e-6);
+    minw = std::max(g.approx_dt * 0.5, (g.data_t1 - g.data_t0) * 1e-6);
     return true;
 }
 
