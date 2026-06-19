@@ -9,6 +9,17 @@ lvm_viewer_gui.exe
 tests/run_tests
 tests/run_tests.exe
 
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.py
+
+# Temporary / scratch files
+test_*.py
+check_*.py
+fix_*.py
+
 # Test scratch files
 tests/_tmp_*
 
