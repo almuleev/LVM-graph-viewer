@@ -276,6 +276,7 @@ static const Strings kRu = {
     L"LVM Viewer — просмотрщик сигналов LabVIEW (.lvm / .txt)\n\nНативное приложение Win32 + GDI/GDI+, без внешних\nзависимостей и без Qt. Время и спектр (БПФ), измерения\nс примагничиванием, направляющие линии, визуальное\nсглаживание, экспорт PNG/CSV.\n\nСборка: build_gui.ps1 (MinGW g++) или make gui.",
     L"Открыть файл…", L"Сохранить PNG", L"Сохранить CSV", L"Переключить Время / Гц", L"Воспроизведение", L"Пауза", L"Режим измерения точек", L"Сбросить вид", L"Авто масштаб по Y", L"Настройки точек",
     L"Русский", L"English", L"Язык",
+    L"Курсорные линии", L"X=%.5g", L"Y=%.5g", L"Курсор: X=%.5g, Y=%.5g",
     L"Загрузка файла...\nПожалуйста, подождите",
     L"Откройте файл .lvm или .txt (кнопка «Открыть файл» / клавиша O)",
     L"   |   Δf = %.5g Гц,  Δamp = %.4g",
@@ -299,8 +300,7 @@ static const Strings kRu = {
     L"Frequency",
     L"Кликните на графике, чтобы поставить вертикальную линию (Esc — отмена). Можно добавить несколько линий подряд.",
     L"Кликните на графике, чтобы поставить горизонтальную линию (Esc — отмена). Можно добавить несколько линий подряд.",
-    L"Кликните на графике, чтобы поставить маркер (Esc — отмена).",
-    L"Курсорные линии", L"X=%.5g", L"Y=%.5g", L"Курсор: X=%.5g, Y=%.5g"
+    L"Кликните на графике, чтобы поставить маркер (Esc — отмена)."
 };
 
 static const Strings kEn = {
@@ -328,6 +328,7 @@ static const Strings kEn = {
     L"LVM Viewer — LabVIEW signal viewer (.lvm / .txt)\n\nNative Win32 + GDI/GDI+ application, no external\ndependencies, no Qt. Time and spectrum (FFT), measurements\nwith snapping, guide lines, visual smoothing, PNG/CSV export.\n\nBuild: build_gui.ps1 (MinGW g++) or make gui.",
     L"Open file…", L"Save PNG", L"Save CSV", L"Toggle Time / Hz", L"Playback", L"Pause", L"Measurement point mode", L"Reset view", L"Auto Y scale", L"Point settings",
     L"Русский", L"English", L"Language",
+    L"Cursor lines", L"X=%.5g", L"Y=%.5g", L"Cursor: X=%.5g, Y=%.5g",
     L"Loading file...\nPlease wait",
     L"Open a .lvm or .txt file (click «Open file» / press O)",
     L"   |   Δf = %.5g Hz,  Δamp = %.4g",
@@ -351,8 +352,7 @@ static const Strings kEn = {
     L"Frequency",
     L"Click on the plot to place a vertical line (Esc to cancel). You can add multiple lines.",
     L"Click on the plot to place a horizontal line (Esc to cancel). You can add multiple lines.",
-    L"Click on the plot to place a marker (Esc to cancel).",
-    L"Cursor lines", L"X=%.5g", L"Y=%.5g", L"Cursor: X=%.5g, Y=%.5g"
+    L"Click on the plot to place a marker (Esc to cancel)."
 };
 
 const Strings* g_str = &kRu;
