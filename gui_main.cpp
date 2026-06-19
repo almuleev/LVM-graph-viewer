@@ -1307,6 +1307,15 @@ void draw_measure(HDC dc) {
         MoveToEx(dc, X - 8, Y, nullptr); LineTo(dc, X + 9, Y);
         MoveToEx(dc, X, Y - 8, nullptr); LineTo(dc, X, Y + 9);
 
+        // Filled dot at the centre using the chosen marker colour.
+        HBRUSH dot_brush = CreateSolidBrush(g.marker_color);
+        HGDIOBJ old_br = SelectObject(dc, dot_brush);
+        HGDIOBJ old_pn = SelectObject(dc, GetStockObject(NULL_PEN));
+        Ellipse(dc, X - 3, Y - 3, X + 4, Y + 4);
+        SelectObject(dc, old_pn);
+        SelectObject(dc, old_br);
+        DeleteObject(dot_brush);
+
         std::wstring lab;
         if (g.pdisp.number) { swprintf(b, 96, L"#%zu ", i + 1); lab += b; }
         if (g.pdisp.x) { swprintf(b, 96, g_str->fmt_pt_x, g.points[i].first); lab += b; lab += xunit; lab += L" "; }
