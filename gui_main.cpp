@@ -69,6 +69,7 @@ enum {
     // Menu-only commands (no toolbar button).
     IDM_EXIT = 1100,
     IDM_VISMOOTH,       // visual (spline) smoothing toggle
+    IDM_VPAN,           // vertical pan toggle
     IDM_SNAP,           // snap measurement markers to data
     IDM_ADD_VLINE,      // arm: place a vertical guide line
     IDM_ADD_HLINE,      // arm: place a horizontal guide line
@@ -198,7 +199,7 @@ struct Strings {
     const wchar_t* app_title;
     const wchar_t* menu_file; const wchar_t* menu_view; const wchar_t* menu_meas; const wchar_t* menu_lines; const wchar_t* menu_markers; const wchar_t* menu_help;
     const wchar_t* m_open; const wchar_t* m_savepng; const wchar_t* m_savecsv; const wchar_t* m_undo; const wchar_t* m_redo; const wchar_t* m_exit;
-    const wchar_t* m_timehz; const wchar_t* m_zoomin; const wchar_t* m_zoomout; const wchar_t* m_reset; const wchar_t* m_autoy; const wchar_t* m_smooth; const wchar_t* m_play; const wchar_t* m_theme; const wchar_t* m_speed;
+    const wchar_t* m_timehz; const wchar_t* m_zoomin; const wchar_t* m_zoomout; const wchar_t* m_reset; const wchar_t* m_autoy; const wchar_t* m_smooth; const wchar_t* m_vpan; const wchar_t* m_play; const wchar_t* m_theme; const wchar_t* m_speed;
     const wchar_t* m_points; const wchar_t* m_ptsettings; const wchar_t* m_clearpts;
     const wchar_t* m_vline; const wchar_t* m_hline; const wchar_t* m_clearlines;
     const wchar_t* m_addmarker; const wchar_t* m_clearmarkers;
@@ -251,7 +252,7 @@ static const Strings kRu = {
     L"LVM Viewer",
     L"Файл", L"Вид", L"Точки", L"Линии", L"Маркеры", L"Справка",
     L"Открыть файл…\tCtrl+O", L"Сохранить PNG…\tCtrl+S", L"Сохранить CSV…\tCtrl+E", L"Отменить\tCtrl+Z", L"Повторить\tCtrl+Shift+Z", L"Выход\tAlt+F4",
-    L"Время / Гц\tM", L"Увеличить\t+", L"Уменьшить\t−", L"Сбросить вид\tHome", L"Auto Y", L"Сглаживание\tC", L"Play / Pause\tПробел", L"Тёмная тема\tT", L"Скорость",
+    L"Время / Гц\tM", L"Увеличить\t+", L"Уменьшить\t−", L"Сбросить вид\tHome", L"Auto Y", L"Сглаживание\tC", L"Вертикальное панорамирование\tP", L"Play / Pause\tПробел", L"Тёмная тема\tT", L"Скорость",
     L"Точки\tV", L"Настройки…", L"Очистить\tDelete",
     L"Вертикальная\tL", L"Горизонтальная\tH", L"Очистить",
     L"Добавить\tK", L"Очистить",
@@ -269,7 +270,7 @@ static const Strings kRu = {
     L"LVM Viewer", L"Просмотрщик сигналов LabVIEW (.lvm / .txt)",
     L"Как работать с приложением:\r   •  «Открыть файл» (O) — загрузите .lvm или .txt.\r   •  «Время / Гц» (M) — график сигнала или его спектр (БПФ).\r   •  «Измерение» (V) — кликайте точки на графике. Что показывать\r       у точек и примагничивание — в окне «Настройки точек».\r   •  Колесо мыши — масштаб, тяга ЛКМ — прокрутка по времени.\r   •  «Фикс. Y» — зафиксировать масштаб по высоте.\r   •  Пробел — воспроизведение в реальном времени (1 с = 1 с).\r   •  F1 — полный список горячих клавиш.",
     L"Открыть файл", L"Настройки точек…", L"Горячие клавиши", L"Начать работу",
-    L"Файлы\n  O / Ctrl+O\t— Открыть\n  S / Ctrl+S\t— PNG\n  E / Ctrl+E\t— CSV\n  Ctrl+Z\t— Отменить\n  Ctrl+Shift+Z\t— Повторить\n\nВид\n  M\t— Время/Гц\n  C\t— Сглаживание\n  + / ↑\t— Увеличить\n  − / ↓\t— Уменьшить\n  ← / →\t— Сдвиг влево/вправо\n  Home\t— Сброс\n  Пробел\t— Play / Pause\n\nЛинии и маркеры\n  L\t— Вертикальная линия\n  H\t— Горизонтальная линия\n  K\t— Маркер\n  Esc\t— Отменить добавление\n\nТочки\n  V\t— Режим точек вкл/выкл\n  Delete\t— Очистить точки\n\nМышь\n  Колесо\t— Масштаб под курсором\n  Shift+колесо\t— Прокрутка влево/вправо\n  Ctrl+колесо\t— Масштаб по высоте (Y)\n  Alt+колесо\t— Сдвиг вверх/вниз (Y)\n  ЛКМ + тяга\t— Панорамирование\n  ЛКМ\t— Поставить точку / линию / маркер (в режиме)\n  ПКМ\t— Очистить точки\n\n  F1\t— Эта справка",
+    L"Файлы\n  O / Ctrl+O\t— Открыть\n  S / Ctrl+S\t— PNG\n  E / Ctrl+E\t— CSV\n  Ctrl+Z\t— Отменить\n  Ctrl+Shift+Z\t— Повторить\n\nВид\n  M\t— Время/Гц\n  C\t— Сглаживание\n  + / ↑\t— Увеличить\n  − / ↓\t— Уменьшить\n  ← / →\t— Сдвиг влево/вправо\n  Home\t— Сброс\n  Пробел\t— Play / Pause\n\nЛинии и маркеры\n  L\t— Вертикальная линия\n  H\t— Горизонтальная линия\n  K\t— Маркер\n  Esc\t— Отменить добавление\n\nТочки\n  V\t— Режим точек вкл/выкл\n  Delete\t— Очистить точки\n\nМышь\n  Колесо\t— Масштаб под курсором\n  Shift+колесо\t— Прокрутка влево/вправо\n  Ctrl+колесо\t— Масштаб по высоте (Y)\n  Alt+колесо\t— Сдвиг вверх/вниз (Y)\n  ЛКМ + тяга\t— Панорамирование (вкл/выкл вертикальное через Вид)\n  ЛКМ\t— Поставить точку / линию / маркер (в режиме)\n  ПКМ\t— Очистить точки\n\n  F1\t— Эта справка",
     L"LVM Viewer — просмотрщик сигналов LabVIEW (.lvm / .txt)\n\nНативное приложение Win32 + GDI/GDI+, без внешних\nзависимостей и без Qt. Время и спектр (БПФ), измерения\nс примагничиванием, направляющие линии, визуальное\nсглаживание, экспорт PNG/CSV.\n\nСборка: build_gui.ps1 (MinGW g++) или make gui.",
     L"Открыть файл…", L"Сохранить PNG", L"Сохранить CSV", L"Переключить Время / Гц", L"Воспроизведение", L"Пауза", L"Режим измерения точек", L"Сбросить вид", L"Авто масштаб по Y", L"Настройки точек",
     L"Русский", L"English", L"Язык",
@@ -303,7 +304,7 @@ static const Strings kEn = {
     L"LVM Viewer",
     L"File", L"View", L"Points", L"Lines", L"Markers", L"Help",
     L"Open file…\tCtrl+O", L"Save PNG…\tCtrl+S", L"Save CSV…\tCtrl+E", L"Undo\tCtrl+Z", L"Redo\tCtrl+Shift+Z", L"Exit\tAlt+F4",
-    L"Time / Hz\tM", L"Zoom in\t+", L"Zoom out\t−", L"Reset view\tHome", L"Auto Y", L"Smoothing\tC", L"Play / Pause\tSpace", L"Dark theme\tT", L"Speed",
+    L"Time / Hz\tM", L"Zoom in\t+", L"Zoom out\t−", L"Reset view\tHome", L"Auto Y", L"Smoothing\tC", L"Vertical pan\tP", L"Play / Pause\tSpace", L"Dark theme\tT", L"Speed",
     L"Points\tV", L"Settings…", L"Clear\tDelete",
     L"Vertical\tL", L"Horizontal\tH", L"Clear",
     L"Add\tK", L"Clear",
@@ -321,7 +322,7 @@ static const Strings kEn = {
     L"LVM Viewer", L"LabVIEW signal viewer (.lvm / .txt)",
     L"How to use the app:\r   •  «Open file» (O) — load a .lvm or .txt.\r   •  «Time / Hz» (M) — signal plot or its FFT spectrum.\r   •  «Measure» (V) — click points on the plot. What to show\r       at points and snapping — in the «Point settings» window.\r   •  Mouse wheel — zoom, left-drag — pan.\r   •  «Lock Y» — freeze the vertical scale.\r   •  Space — real-time playback (1 s = 1 s).\r   •  F1 — full list of keyboard shortcuts.",
     L"Open file", L"Point settings…", L"Keyboard shortcuts", L"Start working",
-    L"Files\n  O / Ctrl+O\t— Open\n  S / Ctrl+S\t— PNG\n  E / Ctrl+E\t— CSV\n  Ctrl+Z\t— Undo\n  Ctrl+Shift+Z\t— Redo\n\nView\n  M\t— Time / Hz\n  C\t— Smoothing\n  + / ↑\t— Zoom in\n  − / ↓\t— Zoom out\n  ← / →\t— Pan left / right\n  Home\t— Reset view\n  Space\t— Play / Pause\n\nLines and markers\n  L\t— Vertical line\n  H\t— Horizontal line\n  K\t— Marker\n  Esc\t— Cancel adding\n\nPoints\n  V\t— Measure mode on/off\n  Delete\t— Clear points\n\nMouse\n  Wheel\t— Zoom under cursor\n  Shift+wheel\t— Pan left / right\n  Ctrl+wheel\t— Zoom Y\n  Alt+wheel\t— Pan up/down (Y)\n  Left-drag\t— Pan\n  Left-click\t— Drop point / line / marker (in mode)\n  Right-click\t— Clear points\n\n  F1\t— This help",
+    L"Files\n  O / Ctrl+O\t— Open\n  S / Ctrl+S\t— PNG\n  E / Ctrl+E\t— CSV\n  Ctrl+Z\t— Undo\n  Ctrl+Shift+Z\t— Redo\n\nView\n  M\t— Time / Hz\n  C\t— Smoothing\n  + / ↑\t— Zoom in\n  − / ↓\t— Zoom out\n  ← / →\t— Pan left / right\n  Home\t— Reset view\n  Space\t— Play / Pause\n\nLines and markers\n  L\t— Vertical line\n  H\t— Horizontal line\n  K\t— Marker\n  Esc\t— Cancel adding\n\nPoints\n  V\t— Measure mode on/off\n  Delete\t— Clear points\n\nMouse\n  Wheel\t— Zoom under cursor\n  Shift+wheel\t— Pan left / right\n  Ctrl+wheel\t— Zoom Y\n  Alt+wheel\t— Pan up/down (Y)\n  Left-drag\t— Pan (toggle vertical via View)\n  Left-click\t— Drop point / line / marker (in mode)\n  Right-click\t— Clear points\n\n  F1\t— This help",
     L"LVM Viewer — LabVIEW signal viewer (.lvm / .txt)\n\nNative Win32 + GDI/GDI+ application, no external\ndependencies, no Qt. Time and spectrum (FFT), measurements\nwith snapping, guide lines, visual smoothing, PNG/CSV export.\n\nBuild: build_gui.ps1 (MinGW g++) or make gui.",
     L"Open file…", L"Save PNG", L"Save CSV", L"Toggle Time / Hz", L"Playback", L"Pause", L"Measurement point mode", L"Reset view", L"Auto Y scale", L"Point settings",
     L"Русский", L"English", L"Language",
@@ -446,8 +447,11 @@ struct App {
     // icon_font removed — toolbar now uses text labels with ui_font
 
     bool dragging = false;
-    int drag_x = 0;
+    int drag_x = 0, drag_y = 0;
     double drag_lo = 0.0, drag_hi = 0.0;
+    double drag_y_lo = 0.0, drag_y_hi = 0.0;
+
+    bool vertical_pan = true;  // enable vertical panning with left-drag
 };
 
 App g;
@@ -1954,6 +1958,7 @@ void sync_menu() {
         CheckMenuItem(g.menu, id, MF_BYCOMMAND | (on ? MF_CHECKED : MF_UNCHECKED));
     };
     chk(IDM_VISMOOTH, g.visual_smooth);
+    chk(IDM_VPAN, g.vertical_pan);
     chk(IDC_MEASURE, g.measure_mode);
     chk(IDC_AUTOY, g.auto_y);
     chk(IDM_THEME, g_theme == &kDarkTheme);
@@ -1984,6 +1989,7 @@ HMENU make_menu() {
     AppendMenuW(view, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(view, MF_STRING, IDC_AUTOY, L"Auto Y");
     AppendMenuW(view, MF_STRING, IDM_VISMOOTH, L"Сглаживание\tC");
+    AppendMenuW(view, MF_STRING, IDM_VPAN, L"Вертикальное панорамирование\tP");
     AppendMenuW(view, MF_STRING, IDC_PLAY, L"Play / Pause\tПробел");
     AppendMenuW(view, MF_STRING, IDM_THEME, L"Тёмная тема\tT");
     HMENU speed = CreatePopupMenu();
@@ -2599,6 +2605,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     set_status();
                     InvalidateRect(hwnd, nullptr, TRUE);
                     return 0;
+                case IDM_VPAN:
+                    g.vertical_pan = !g.vertical_pan;
+                    sync_menu();
+                    set_status();
+                    return 0;
                 case IDM_THEME:
                     g_theme = (g_theme == &kLightTheme) ? &kDarkTheme : &kLightTheme;
                     update_theme_brushes();
@@ -2837,8 +2848,32 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (!active_axis(lo, hi, minb, maxb, minw)) return 0;
             g.dragging = true;
             g.drag_x = mx;
+            g.drag_y = my;
             g.drag_lo = *lo;
             g.drag_hi = *hi;
+            // Remember Y range for vertical panning.
+            if (g.freq_mode) {
+                if (g.auto_y_amp) {
+                    double ymax = 0.0;
+                    for (std::size_t j = 0; j < g.spec.amp.size(); ++j) {
+                        int ci = channel_index_by_name(g.spec.names[j]);
+                        if (ci < 0 || !g.visible[ci]) continue;
+                        for (auto v : g.spec.amp[j]) if (v > ymax) ymax = v;
+                    }
+                    if (ymax <= 0) ymax = 1.0;
+                    g.drag_y_hi = ymax * 1.08;
+                } else {
+                    g.drag_y_hi = g.y_amp_max;
+                }
+                g.drag_y_lo = 0.0;
+            } else {
+                if (g.auto_y) {
+                    current_time_yrange(g.drag_y_lo, g.drag_y_hi);
+                } else {
+                    g.drag_y_lo = g.y_lock_min;
+                    g.drag_y_hi = g.y_lock_max;
+                }
+            }
             SetCapture(hwnd);
             return 0;
         }
@@ -2860,6 +2895,26 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             *lo = g.drag_lo - d;
             *hi = g.drag_hi - d;
             clamp_range(*lo, *hi, minb, maxb, minw);
+            // Vertical panning
+            if (g.vertical_pan) {
+                const int ph = p.bottom - p.top;
+                if (ph > 0) {
+                    const double dy = static_cast<double>(GET_Y_LPARAM(lp) - g.drag_y) / ph * (g.drag_y_hi - g.drag_y_lo);
+                    if (g.freq_mode) {
+                        double new_ytop = g.drag_y_hi - dy;
+                        if (new_ytop < 1e-12) new_ytop = 1e-12;
+                        g.y_amp_max = new_ytop;
+                        g.auto_y_amp = false;
+                    } else {
+                        double new_lo = g.drag_y_lo - dy;
+                        double new_hi = g.drag_y_hi - dy;
+                        g.y_lock_min = new_lo;
+                        g.y_lock_max = new_hi;
+                        g.auto_y = false;
+                        if (g.autoy) { SendMessageW(g.autoy, BM_SETCHECK, BST_UNCHECKED, 0); InvalidateRect(g.autoy, nullptr, FALSE); }
+                    }
+                }
+            }
             set_status();
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
@@ -2910,6 +2965,7 @@ HACCEL make_accelerators() {
         {FVIRTKEY, VK_RIGHT, IDC_PANRIGHT},
         {FVIRTKEY, VK_HOME, IDC_RESET},
         {FVIRTKEY, 'C', IDM_VISMOOTH},
+        {FVIRTKEY, 'P', IDM_VPAN},
         {FVIRTKEY, 'T', IDM_THEME},
         {FVIRTKEY, 'L', IDM_ADD_VLINE},
         {FVIRTKEY, 'H', IDM_ADD_HLINE},
