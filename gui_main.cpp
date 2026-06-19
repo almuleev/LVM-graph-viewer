@@ -30,6 +30,7 @@
 #include <windowsx.h>
 #include <commctrl.h>
 #include <commdlg.h>
+#include <shellapi.h>
 
 #include <algorithm>
 #include <cmath>
@@ -63,6 +64,8 @@ enum {
     IDC_RESET,
     IDC_PANLEFT,
     IDC_PANRIGHT,
+    IDC_GOTO_START,
+    IDC_GOTO_END,
     IDC_AUTOY,          // toolbar: auto-fit vertical scale (was lock_y)
     IDC_PTSETTINGS,     // toolbar: open the measurement-point settings panel
 
@@ -79,6 +82,7 @@ enum {
     IDM_CLEAR_POINTS,
     IDM_HOTKEYS,
     IDM_ABOUT,
+    IDM_RENAME_CHANNELS, // rename channel display names
     IDS_COLOR,          // settings panel: marker colour button
     IDW_START,          // welcome screen: start working
 
@@ -204,6 +208,7 @@ struct Strings {
     const wchar_t* m_vline; const wchar_t* m_hline; const wchar_t* m_clearlines;
     const wchar_t* m_addmarker; const wchar_t* m_clearmarkers;
     const wchar_t* m_hotkeys; const wchar_t* m_about;
+    const wchar_t* m_rename;
     const wchar_t* btn_open; const wchar_t* btn_png; const wchar_t* btn_csv; const wchar_t* btn_timehz; const wchar_t* btn_play; const wchar_t* btn_pause;
     const wchar_t* btn_measure; const wchar_t* btn_reset; const wchar_t* btn_autoy; const wchar_t* btn_settings;
     const wchar_t* panel_channels;
@@ -257,6 +262,7 @@ static const Strings kRu = {
     L"Вертикальная\tL", L"Горизонтальная\tH", L"Очистить",
     L"Добавить\tK", L"Очистить",
     L"Горячие клавиши…\tF1", L"О программе…",
+    L"Переименовать каналы…",
     L"Открыть", L"PNG", L"CSV", L"Время/Гц", L"▶ Play", L"⏸ Пауза", L"Точки", L"Сброс", L"Auto zoom", L"Настройки",
     L"Каналы",
     L"Время", L"Гц (FFT)", L"Каналов", L"Точек", L"Окно", L"Y: авто", L"Y: фикс.", L"Линий", L"Маркеров", L"Скорость",
@@ -270,7 +276,7 @@ static const Strings kRu = {
     L"LVM Viewer", L"Просмотрщик сигналов LabVIEW (.lvm / .txt)",
     L"Как работать с приложением:\r   •  «Открыть файл» (O) — загрузите .lvm или .txt.\r   •  «Время / Гц» (M) — график сигнала или его спектр (БПФ).\r   •  «Измерение» (V) — кликайте точки на графике. Что показывать\r       у точек и примагничивание — в окне «Настройки точек».\r   •  Колесо мыши — масштаб, тяга ЛКМ — прокрутка по времени.\r   •  «Фикс. Y» — зафиксировать масштаб по высоте.\r   •  Пробел — воспроизведение в реальном времени (1 с = 1 с).\r   •  F1 — полный список горячих клавиш.",
     L"Открыть файл", L"Настройки точек…", L"Горячие клавиши", L"Начать работу",
-    L"Файлы\n  O / Ctrl+O\t— Открыть\n  S / Ctrl+S\t— PNG\n  E / Ctrl+E\t— CSV\n  Ctrl+Z\t— Отменить\n  Ctrl+Shift+Z\t— Повторить\n\nВид\n  M\t— Время/Гц\n  C\t— Сглаживание\n  + / ↑\t— Увеличить\n  − / ↓\t— Уменьшить\n  ← / →\t— Сдвиг влево/вправо\n  Home\t— Сброс\n  Пробел\t— Play / Pause\n\nЛинии и маркеры\n  L\t— Вертикальная линия\n  H\t— Горизонтальная линия\n  K\t— Маркер\n  Esc\t— Отменить добавление\n\nТочки\n  V\t— Режим точек вкл/выкл\n  Delete\t— Очистить точки\n\nМышь\n  Колесо\t— Масштаб под курсором\n  Shift+колесо\t— Прокрутка влево/вправо\n  Ctrl+колесо\t— Масштаб по высоте (Y)\n  Alt+колесо\t— Сдвиг вверх/вниз (Y)\n  ЛКМ + тяга\t— Панорамирование (вкл/выкл вертикальное через Вид)\n  ЛКМ\t— Поставить точку / линию / маркер (в режиме)\n  ПКМ\t— Очистить точки\n\n  F1\t— Эта справка",
+    L"Файлы\n  O / Ctrl+O\t— Открыть\n  S / Ctrl+S\t— PNG\n  E / Ctrl+E\t— CSV\n  Ctrl+Z\t— Отменить\n  Ctrl+Shift+Z\t— Повторить\n\nВид\n  M\t— Время/Гц\n  C\t— Сглаживание\n  + / ↑\t— Увеличить\n  − / ↓\t— Уменьшить\n  ← / →\t— Сдвиг влево/вправо\n  Home\t— Сброс\n  Ctrl+Home\t— В начало\n  Ctrl+End\t— В конец\n  Пробел\t— Play / Pause\n\nЛинии и маркеры\n  L\t— Вертикальная линия\n  H\t— Горизонтальная линия\n  K\t— Маркер\n  Esc\t— Отменить добавление\n\nТочки\n  V\t— Режим точек вкл/выкл\n  Delete\t— Очистить точки\n\nМышь\n  Колесо\t— Масштаб под курсором\n  Shift+колесо\t— Прокрутка влево/вправо\n  Ctrl+колесо\t— Масштаб по высоте (Y)\n  Alt+колесо\t— Сдвиг вверх/вниз (Y)\n  ЛКМ + тяга\t— Панорамирование (вкл/выкл вертикальное через Вид)\n  ЛКМ\t— Поставить точку / линию / маркер (в режиме)\n  ПКМ\t— Очистить точки\n\n  F1\t— Эта справка",
     L"LVM Viewer — просмотрщик сигналов LabVIEW (.lvm / .txt)\n\nНативное приложение Win32 + GDI/GDI+, без внешних\nзависимостей и без Qt. Время и спектр (БПФ), измерения\nс примагничиванием, направляющие линии, визуальное\nсглаживание, экспорт PNG/CSV.\n\nСборка: build_gui.ps1 (MinGW g++) или make gui.",
     L"Открыть файл…", L"Сохранить PNG", L"Сохранить CSV", L"Переключить Время / Гц", L"Воспроизведение", L"Пауза", L"Режим измерения точек", L"Сбросить вид", L"Авто масштаб по Y", L"Настройки точек",
     L"Русский", L"English", L"Язык",
@@ -309,6 +315,7 @@ static const Strings kEn = {
     L"Vertical\tL", L"Horizontal\tH", L"Clear",
     L"Add\tK", L"Clear",
     L"Keyboard shortcuts…\tF1", L"About…",
+    L"Rename channels…",
     L"Open", L"PNG", L"CSV", L"Time/Hz", L"▶ Play", L"⏸ Pause", L"Points", L"Reset", L"Auto zoom", L"Settings",
     L"Channels",
     L"Time", L"Hz (FFT)", L"Channels", L"Points", L"Window", L"Y: auto", L"Y: fixed", L"Lines", L"Markers", L"Speed",
@@ -322,7 +329,7 @@ static const Strings kEn = {
     L"LVM Viewer", L"LabVIEW signal viewer (.lvm / .txt)",
     L"How to use the app:\r   •  «Open file» (O) — load a .lvm or .txt.\r   •  «Time / Hz» (M) — signal plot or its FFT spectrum.\r   •  «Measure» (V) — click points on the plot. What to show\r       at points and snapping — in the «Point settings» window.\r   •  Mouse wheel — zoom, left-drag — pan.\r   •  «Lock Y» — freeze the vertical scale.\r   •  Space — real-time playback (1 s = 1 s).\r   •  F1 — full list of keyboard shortcuts.",
     L"Open file", L"Point settings…", L"Keyboard shortcuts", L"Start working",
-    L"Files\n  O / Ctrl+O\t— Open\n  S / Ctrl+S\t— PNG\n  E / Ctrl+E\t— CSV\n  Ctrl+Z\t— Undo\n  Ctrl+Shift+Z\t— Redo\n\nView\n  M\t— Time / Hz\n  C\t— Smoothing\n  + / ↑\t— Zoom in\n  − / ↓\t— Zoom out\n  ← / →\t— Pan left / right\n  Home\t— Reset view\n  Space\t— Play / Pause\n\nLines and markers\n  L\t— Vertical line\n  H\t— Horizontal line\n  K\t— Marker\n  Esc\t— Cancel adding\n\nPoints\n  V\t— Measure mode on/off\n  Delete\t— Clear points\n\nMouse\n  Wheel\t— Zoom under cursor\n  Shift+wheel\t— Pan left / right\n  Ctrl+wheel\t— Zoom Y\n  Alt+wheel\t— Pan up/down (Y)\n  Left-drag\t— Pan (toggle vertical via View)\n  Left-click\t— Drop point / line / marker (in mode)\n  Right-click\t— Clear points\n\n  F1\t— This help",
+    L"Files\n  O / Ctrl+O\t— Open\n  S / Ctrl+S\t— PNG\n  E / Ctrl+E\t— CSV\n  Ctrl+Z\t— Undo\n  Ctrl+Shift+Z\t— Redo\n\nView\n  M\t— Time / Hz\n  C\t— Smoothing\n  + / ↑\t— Zoom in\n  − / ↓\t— Zoom out\n  ← / →\t— Pan left / right\n  Home\t— Reset view\n  Ctrl+Home\t— Go to start\n  Ctrl+End\t— Go to end\n  Space\t— Play / Pause\n\nLines and markers\n  L\t— Vertical line\n  H\t— Horizontal line\n  K\t— Marker\n  Esc\t— Cancel adding\n\nPoints\n  V\t— Measure mode on/off\n  Delete\t— Clear points\n\nMouse\n  Wheel\t— Zoom under cursor\n  Shift+wheel\t— Pan left / right\n  Ctrl+wheel\t— Zoom Y\n  Alt+wheel\t— Pan up/down (Y)\n  Left-drag\t— Pan (toggle vertical via View)\n  Left-click\t— Drop point / line / marker (in mode)\n  Right-click\t— Clear points\n\n  F1\t— This help",
     L"LVM Viewer — LabVIEW signal viewer (.lvm / .txt)\n\nNative Win32 + GDI/GDI+ application, no external\ndependencies, no Qt. Time and spectrum (FFT), measurements\nwith snapping, guide lines, visual smoothing, PNG/CSV export.\n\nBuild: build_gui.ps1 (MinGW g++) or make gui.",
     L"Open file…", L"Save PNG", L"Save CSV", L"Toggle Time / Hz", L"Playback", L"Pause", L"Measurement point mode", L"Reset view", L"Auto Y scale", L"Point settings",
     L"Русский", L"English", L"Language",
@@ -378,6 +385,7 @@ struct GuideLine {
 struct App {
     lvm::Dataset ds;
     std::vector<char> visible;
+    std::vector<std::wstring> channel_labels;  // user-editable display names
     bool freq_mode = false;
 
     double data_t0 = 0.0, data_t1 = 1.0;
@@ -661,7 +669,7 @@ void rebuild_checks() {
     HINSTANCE inst = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(g.main, GWLP_HINSTANCE));
     for (std::size_t i = 0; i < g.ds.channel_count(); ++i) {
         HWND c = CreateWindowExW(
-            0, L"BUTTON", to_w(g.ds.names[i]).c_str(),
+            0, L"BUTTON", g.channel_labels[i].c_str(),
             WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 10, 10, g.main,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_CHAN_BASE + i)), inst, nullptr);
         SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
@@ -880,6 +888,28 @@ void pan_y_by(double frac) {
     invalidate_plot();
 }
 
+void goto_start() {
+    double *lo, *hi, minb, maxb, minw;
+    if (!active_axis(lo, hi, minb, maxb, minw)) return;
+    const double w = *hi - *lo;
+    *lo = minb;
+    *hi = minb + w;
+    if (*hi > maxb) { *hi = maxb; *lo = maxb - w; if (*lo < minb) *lo = minb; }
+    set_status();
+    invalidate_plot();
+}
+
+void goto_end() {
+    double *lo, *hi, minb, maxb, minw;
+    if (!active_axis(lo, hi, minb, maxb, minw)) return;
+    const double w = *hi - *lo;
+    *hi = maxb;
+    *lo = maxb - w;
+    if (*lo < minb) { *lo = minb; *hi = minb + w; if (*hi > maxb) *hi = maxb; }
+    set_status();
+    invalidate_plot();
+}
+
 void reset_view() {
     g.win_start = g.data_t0;
     g.win_end = g.data_t1;
@@ -960,6 +990,8 @@ bool load_path(const std::wstring& wpath) {
 
     g.ds = std::move(ds);
     g.visible.assign(g.ds.channel_count(), 1);
+    g.channel_labels.clear();
+    for (const auto& n : g.ds.names) g.channel_labels.push_back(to_w(n));
     g.data_t0 = g.ds.time.front();
     g.data_t1 = g.ds.time.back();
     if (g.data_t1 <= g.data_t0) g.data_t1 = g.data_t0 + 1.0;
@@ -1128,7 +1160,7 @@ void draw_legend(HDC dc, const RECT& p) {
     SetBkMode(dc, TRANSPARENT);
 
     for (int i = 0; i < ch_count; ++i) {
-        std::wstring nm = to_w(g.ds.names[i]);
+        std::wstring nm = g.channel_labels[i];
         SIZE sz;
         GetTextExtentPoint32W(dc, nm.c_str(), static_cast<int>(nm.size()), &sz);
         if (sz.cx > max_width) max_width = sz.cx;
@@ -1183,7 +1215,7 @@ void draw_legend(HDC dc, const RECT& p) {
 
         SetTextColor(dc, vis ? g_theme->text_primary : g_theme->text_secondary);
         SetTextAlign(dc, TA_LEFT | TA_TOP);
-        std::wstring nm = to_w(g.ds.names[i]);
+        std::wstring nm = g.channel_labels[i];
         TextOutW(dc, box_x + pad + 18, y, nm.c_str(), static_cast<int>(nm.size()));
 
         // Store hit-test rect for this item (full row, for easier clicking)
@@ -1950,6 +1982,91 @@ void show_about() {
     MessageBoxW(g.main, g_str->about_body, g_str->dlg_about_title, MB_OK | MB_ICONINFORMATION);
 }
 
+void show_rename_dialog() {
+    if (!has_data()) {
+        MessageBoxW(g.main, g_str->msg_openfirst, g_str->msg_nodata, MB_ICONINFORMATION);
+        return;
+    }
+    HINSTANCE inst = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(g.main, GWLP_HINSTANCE));
+    const int n = static_cast<int>(g.ds.channel_count());
+    const int row_h = 28;
+    const int dlg_w = 340;
+    const int dlg_h = 80 + n * row_h;
+    RECT mr; GetWindowRect(g.main, &mr);
+    int dx = mr.left + (mr.right - mr.left - dlg_w) / 2;
+    int dy = mr.top + (mr.bottom - mr.top - dlg_h) / 2;
+
+    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"LvmRenameDlg", g_str->m_rename,
+        WS_POPUP | WS_CAPTION | WS_SYSMENU, dx, dy, dlg_w, dlg_h,
+        g.main, nullptr, inst, nullptr);
+    if (!dlg) return;
+
+    HFONT font = g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+    std::vector<HWND> edits;
+    edits.reserve(n);
+    for (int i = 0; i < n; ++i) {
+        int y = 12 + i * row_h;
+        HWND lbl = CreateWindowExW(0, L"STATIC", g.channel_labels[i].c_str(),
+            WS_CHILD | WS_VISIBLE | SS_LEFT, 12, y, 80, 20, dlg, nullptr, inst, nullptr);
+        SendMessageW(lbl, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        HWND ed = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", g.channel_labels[i].c_str(),
+            WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 100, y, 220, 22, dlg,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(1000 + i)), inst, nullptr);
+        SendMessageW(ed, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        edits.push_back(ed);
+    }
+
+    int by = 16 + n * row_h;
+    HWND ok = CreateWindowExW(0, L"BUTTON", L"OK", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON | WS_TABSTOP,
+                              dlg_w - 180, by, 80, 26, dlg, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDOK)), inst, nullptr);
+    HWND cancel = CreateWindowExW(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
+                                  dlg_w - 90, by, 80, 26, dlg, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)), inst, nullptr);
+    SendMessageW(ok, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+    SendMessageW(cancel, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+
+    EnableWindow(g.main, FALSE);
+    ShowWindow(dlg, SW_SHOW);
+    UpdateWindow(dlg);
+    SetFocus(edits.empty() ? ok : edits[0]);
+
+    bool done = false;
+    MSG m;
+    while (!done && GetMessageW(&m, nullptr, 0, 0) > 0) {
+        if (m.message == WM_KEYDOWN && m.wParam == VK_RETURN) {
+            for (int i = 0; i < n; ++i) {
+                wchar_t buf[256];
+                GetWindowTextW(edits[i], buf, 256);
+                g.channel_labels[i] = buf;
+            }
+            rebuild_checks();
+            done = true;
+        } else if (m.message == WM_KEYDOWN && m.wParam == VK_ESCAPE) {
+            done = true;
+        } else if (m.message == WM_COMMAND) {
+            int id = LOWORD(m.wParam);
+            if (id == IDOK) {
+                for (int i = 0; i < n; ++i) {
+                    wchar_t buf[256];
+                    GetWindowTextW(edits[i], buf, 256);
+                    g.channel_labels[i] = buf;
+                }
+                rebuild_checks();
+                done = true;
+            } else if (id == IDCANCEL) {
+                done = true;
+            }
+        } else {
+            TranslateMessage(&m);
+            DispatchMessageW(&m);
+        }
+    }
+
+    EnableWindow(g.main, TRUE);
+    DestroyWindow(dlg);
+    SetFocus(g.main);
+    InvalidateRect(g.main, nullptr, TRUE);
+}
+
 // Refresh every checkable menu item from the current app state. Cheap, so we
 // just call it whenever a toggle changes (menu, toolbar, or accelerator).
 void sync_menu() {
@@ -1986,10 +2103,13 @@ HMENU make_menu() {
     AppendMenuW(view, MF_STRING, IDC_ZOOMIN, L"Увеличить\t+");
     AppendMenuW(view, MF_STRING, IDC_ZOOMOUT, L"Уменьшить\t−");
     AppendMenuW(view, MF_STRING, IDC_RESET, L"Сбросить вид\tHome");
+    AppendMenuW(view, MF_STRING, IDC_GOTO_START, L"В начало\tCtrl+Home");
+    AppendMenuW(view, MF_STRING, IDC_GOTO_END, L"В конец\tCtrl+End");
     AppendMenuW(view, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(view, MF_STRING, IDC_AUTOY, L"Auto Y");
     AppendMenuW(view, MF_STRING, IDM_VISMOOTH, L"Сглаживание\tC");
     AppendMenuW(view, MF_STRING, IDM_VPAN, L"Вертикальное панорамирование\tP");
+    AppendMenuW(view, MF_STRING, IDM_RENAME_CHANNELS, L"Переименовать каналы…");
     AppendMenuW(view, MF_STRING, IDC_PLAY, L"Play / Pause\tПробел");
     AppendMenuW(view, MF_STRING, IDM_THEME, L"Тёмная тема\tT");
     HMENU speed = CreatePopupMenu();
@@ -2623,6 +2743,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     if (g.welcome_wnd) InvalidateRect(g.welcome_wnd, nullptr, TRUE);
                     InvalidateRect(hwnd, nullptr, TRUE);
                     return 0;
+                case IDM_RENAME_CHANNELS:
+                    show_rename_dialog();
+                    return 0;
                 case IDM_ADD_VLINE:
                     if (!has_data()) { MessageBoxW(hwnd, g_str->msg_openfirst, g_str->msg_nodata, MB_ICONINFORMATION); return 0; }
                     g.pending_line = 1;
@@ -2687,6 +2810,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 case IDC_ZOOMIN: zoom_at(0.5, 0.7); return 0;
                 case IDC_ZOOMOUT: zoom_at(0.5, 1.0 / 0.7); return 0;
                 case IDC_RESET: reset_view(); return 0;
+                case IDC_GOTO_START: goto_start(); return 0;
+                case IDC_GOTO_END: goto_end(); return 0;
                 case IDC_PANLEFT: pan_by(-0.2); return 0;
                 case IDC_PANRIGHT: pan_by(0.2); return 0;
                 case IDM_HOTKEYS: show_hotkeys(); return 0;
@@ -2930,6 +3055,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
             break;
+        case WM_DROPFILES: {
+            HDROP hDrop = reinterpret_cast<HDROP>(wp);
+            UINT count = DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);
+            if (count > 0) {
+                wchar_t path[MAX_PATH];
+                if (DragQueryFileW(hDrop, 0, path, MAX_PATH)) {
+                    if (!load_path(path))
+                        MessageBoxW(hwnd, to_w(g.last_error).c_str(), g_str->msg_read_err, MB_ICONERROR | MB_OK);
+                }
+            }
+            DragFinish(hDrop);
+            return 0;
+        }
         case WM_DESTROY:
             stop_play();
             KillTimer(hwnd, 2);
@@ -2964,6 +3102,8 @@ HACCEL make_accelerators() {
         {FVIRTKEY, VK_LEFT, IDC_PANLEFT},
         {FVIRTKEY, VK_RIGHT, IDC_PANRIGHT},
         {FVIRTKEY, VK_HOME, IDC_RESET},
+        {FVIRTKEY | FCONTROL, VK_HOME, IDC_GOTO_START},
+        {FVIRTKEY | FCONTROL, VK_END, IDC_GOTO_END},
         {FVIRTKEY, 'C', IDM_VISMOOTH},
         {FVIRTKEY, 'P', IDM_VPAN},
         {FVIRTKEY, 'T', IDM_THEME},
@@ -3017,6 +3157,16 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int show) {
     wcw.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
     RegisterClassExW(&wcw);
 
+    // Rename dialog window class.
+    WNDCLASSEXW rc = {};
+    rc.cbSize = sizeof(rc);
+    rc.lpfnWndProc = DefWindowProcW;
+    rc.hInstance = inst;
+    rc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    rc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+    rc.lpszClassName = L"LvmRenameDlg";
+    RegisterClassExW(&rc);
+
     g.main = CreateWindowExW(0, wc.lpszClassName, g_str->app_title,
                              WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1180, 720,
                              nullptr, nullptr, inst, nullptr);
@@ -3024,6 +3174,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int show) {
 
     ShowWindow(g.main, show);
     UpdateWindow(g.main);
+    DragAcceptFiles(g.main, TRUE);
 
     if (cmd && *cmd) {
         std::wstring path = cmd;
