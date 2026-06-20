@@ -56,6 +56,7 @@ enum {
     IDC_OPEN = 1001,
     IDC_SAVEPNG,
     IDC_SAVECSV,
+    IDC_SAVETXT,
     IDC_MODE,
     IDC_PLAY,
     IDC_MEASURE,
@@ -113,6 +114,8 @@ enum {
     IDM_LANG_EN = 1601,
 
     IDC_CHAN_BASE = 2000,
+    IDC_CHAN_LABEL_BASE = 3000,
+    IDC_CHAN_EDIT = 4000,
 };
 
 const int kTopBar = 72;        // two-row compact toolbar
@@ -438,6 +441,9 @@ struct App {
     HWND reset = nullptr, autoy = nullptr, ptsettings = nullptr;
     HWND status = nullptr;
     std::vector<HWND> checks;
+    std::vector<HWND> check_labels;
+    HWND channel_edit = nullptr;
+    int editing_channel = -1;
     std::vector<HWND> buttons;   // owner-drawn toolbar buttons
     HWND hovered_btn = nullptr;
     std::wstring status_text;
@@ -481,6 +487,7 @@ struct UndoAction {
 };
 std::vector<UndoAction> g_undo;
 std::vector<UndoAction> g_redo;
+WNDPROC g_channel_edit_proc = nullptr;
 
 void push_undo(const UndoAction& a) {
     g_undo.push_back(a);
@@ -657,9 +664,79 @@ int channel_index_by_name(const std::string& name) {
     return -1;
 }
 
+void finish_channel_rename(bool apply) {
+    if (g.editing_channel < 0 || g.editing_channel >= static_cast<int>(g.channel_labels.size())) return;
+    const int ci = g.editing_channel;
+    if (apply && g.channel_edit) {
+        wchar_t buf[256];
+        GetWindowTextW(g.channel_edit, buf, 256);
+        g.channel_labels[ci] = buf;
+        if (ci < static_cast<int>(g.check_labels.size()) && g.check_labels[ci]) {
+            SetWindowTextW(g.check_labels[ci], g.channel_labels[ci].c_str());
+        }
+        InvalidateRect(g.main, nullptr, TRUE);
+    }
+    if (g.channel_edit) {
+        DestroyWindow(g.channel_edit);
+        g.channel_edit = nullptr;
+    }
+    g_channel_edit_proc = nullptr;
+    g.editing_channel = -1;
+}
+
+LRESULT CALLBACK ChannelEditProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+        case WM_GETDLGCODE:
+            return CallWindowProcW(g_channel_edit_proc, hwnd, msg, wp, lp) | DLGC_WANTALLKEYS;
+        case WM_KEYDOWN:
+            if (wp == VK_RETURN) {
+                finish_channel_rename(true);
+                SetFocus(g.main);
+                return 0;
+            }
+            if (wp == VK_ESCAPE) {
+                finish_channel_rename(false);
+                SetFocus(g.main);
+                return 0;
+            }
+            break;
+        case WM_KILLFOCUS:
+            finish_channel_rename(true);
+            return 0;
+    }
+    return CallWindowProcW(g_channel_edit_proc, hwnd, msg, wp, lp);
+}
+
+void start_channel_rename(int ci) {
+    if (ci < 0 || ci >= static_cast<int>(g.channel_labels.size())) return;
+    finish_channel_rename(true);
+    if (ci >= static_cast<int>(g.check_labels.size()) || !g.check_labels[ci]) return;
+
+    RECT r;
+    GetWindowRect(g.check_labels[ci], &r);
+    MapWindowPoints(nullptr, g.main, reinterpret_cast<LPPOINT>(&r), 2);
+    HINSTANCE inst = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(g.main, GWLP_HINSTANCE));
+    HFONT font = g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+    g.channel_edit = CreateWindowExW(
+        WS_EX_CLIENTEDGE, L"EDIT", g.channel_labels[ci].c_str(),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+        r.left - 2, r.top - 1, (r.right - r.left) + 4, (r.bottom - r.top) + 2,
+        g.main, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_CHAN_EDIT)), inst, nullptr);
+    if (!g.channel_edit) return;
+    SendMessageW(g.channel_edit, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+    SendMessageW(g.channel_edit, EM_SETSEL, 0, -1);
+    g_channel_edit_proc = reinterpret_cast<WNDPROC>(
+        SetWindowLongPtrW(g.channel_edit, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(ChannelEditProc)));
+    g.editing_channel = ci;
+    SetFocus(g.channel_edit);
+}
+
 void destroy_checks() {
+    finish_channel_rename(true);
     for (HWND h : g.checks) DestroyWindow(h);
     g.checks.clear();
+    for (HWND h : g.check_labels) DestroyWindow(h);
+    g.check_labels.clear();
 }
 
 void rebuild_checks() {
@@ -669,25 +746,41 @@ void rebuild_checks() {
     HINSTANCE inst = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(g.main, GWLP_HINSTANCE));
     for (std::size_t i = 0; i < g.ds.channel_count(); ++i) {
         HWND c = CreateWindowExW(
-            0, L"BUTTON", g.channel_labels[i].c_str(),
+            0, L"BUTTON", L"",
             WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 10, 10, g.main,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_CHAN_BASE + i)), inst, nullptr);
         SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         SendMessageW(c, BM_SETCHECK, g.visible[i] ? BST_CHECKED : BST_UNCHECKED, 0);
         g.checks.push_back(c);
+
+        HWND lbl = CreateWindowExW(
+            0, L"STATIC", g.channel_labels[i].c_str(),
+            WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOTIFY | SS_CENTERIMAGE,
+            0, 0, 10, 10, g.main,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_CHAN_LABEL_BASE + i)), inst, nullptr);
+        SendMessageW(lbl, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        g.check_labels.push_back(lbl);
     }
 }
 
 void hide_ui_controls() {
     for (HWND b : g.buttons) ShowWindow(b, SW_HIDE);
     for (HWND c : g.checks) ShowWindow(c, SW_HIDE);
+    for (HWND c : g.check_labels) ShowWindow(c, SW_HIDE);
+    if (g.channel_edit) ShowWindow(g.channel_edit, SW_HIDE);
     if (g.status) ShowWindow(g.status, SW_HIDE);
 }
 
 void show_ui_controls() {
     for (HWND b : g.buttons) ShowWindow(b, SW_SHOW);
     for (HWND c : g.checks) ShowWindow(c, SW_SHOW);
+    for (HWND c : g.check_labels) ShowWindow(c, SW_SHOW);
+    if (g.channel_edit) ShowWindow(g.channel_edit, SW_SHOW);
     if (g.status) ShowWindow(g.status, SW_SHOW);
+}
+
+bool welcome_visible() {
+    return g.welcome_wnd && IsWindow(g.welcome_wnd) && IsWindowVisible(g.welcome_wnd);
 }
 
 void layout() {
@@ -719,7 +812,19 @@ void layout() {
 
     const int panel_x = cw - kRightPanel + 12;
     int y = kTopBar + 28;
-    for (HWND c : g.checks) { MoveWindow(c, panel_x + 18, y, kRightPanel - 24 - 18, 24, TRUE); y += 26; }
+    for (std::size_t i = 0; i < g.checks.size(); ++i) {
+        MoveWindow(g.checks[i], panel_x, y + 2, 18, 20, TRUE);
+        if (i < g.check_labels.size()) {
+            MoveWindow(g.check_labels[i], panel_x + 22, y, kRightPanel - 24 - 22, 24, TRUE);
+        }
+        y += 26;
+    }
+    if (g.channel_edit && g.editing_channel >= 0 && g.editing_channel < static_cast<int>(g.check_labels.size())) {
+        RECT r;
+        GetWindowRect(g.check_labels[g.editing_channel], &r);
+        MapWindowPoints(nullptr, g.main, reinterpret_cast<LPPOINT>(&r), 2);
+        MoveWindow(g.channel_edit, r.left - 2, r.top - 1, (r.right - r.left) + 4, (r.bottom - r.top) + 2, TRUE);
+    }
 
     MoveWindow(g.status, 8, ch - kBottomBar + 4, cw - 16, 20, TRUE);
 }
@@ -1697,6 +1802,14 @@ void on_paint(HDC hdc) {
     FillRect(mem, &rc, bg);
     DeleteObject(bg);
 
+    if (welcome_visible()) {
+        BitBlt(hdc, 0, 0, cw, ch, mem, 0, 0, SRCCOPY);
+        SelectObject(mem, obmp);
+        DeleteObject(bmp);
+        DeleteDC(mem);
+        return;
+    }
+
     // Toolbar band across the top.
     RECT topbar = {0, 0, cw, kTopBar};
     HBRUSH tbb = CreateSolidBrush(g_theme->bg_toolbar);
@@ -1833,6 +1946,12 @@ bool save_png(const std::wstring& path) {
     return ok;
 }
 
+std::string current_channel_label(std::size_t ci) {
+    if (ci < g.channel_labels.size()) return to_acp(g.channel_labels[ci].c_str());
+    if (ci < g.ds.names.size()) return g.ds.names[ci];
+    return "Channel_" + std::to_string(ci + 1);
+}
+
 // Export the visible segment: time-domain rows (Time mode) or spectrum (Hz).
 bool save_csv(const std::wstring& path) {
     std::ofstream out(to_acp(path.c_str()), std::ios::binary);
@@ -1843,7 +1962,7 @@ bool save_csv(const std::wstring& path) {
         out << g_str->csv_freq;
         for (std::size_t j = 0; j < g.spec.amp.size(); ++j) {
             int ci = channel_index_by_name(g.spec.names[j]);
-            if (ci >= 0 && g.visible[ci]) { out << "," << g.spec.names[j]; cols.push_back(j); }
+            if (ci >= 0 && g.visible[ci]) { out << "," << current_channel_label(static_cast<std::size_t>(ci)); cols.push_back(j); }
         }
         out << "\n";
         for (std::size_t k = 0; k < g.spec.freqs.size(); ++k) {
@@ -1857,7 +1976,7 @@ bool save_csv(const std::wstring& path) {
         std::vector<std::size_t> cols;
         out << g_str->csv_time;
         for (std::size_t c = 0; c < g.ds.channel_count(); ++c)
-            if (g.visible[c]) { out << "," << g.ds.names[c]; cols.push_back(c); }
+            if (g.visible[c]) { out << "," << current_channel_label(c); cols.push_back(c); }
         out << "\n";
         for (std::size_t r = 0; r < g.ds.rows(); ++r) {
             const double tt = g.ds.time[r];
@@ -1865,6 +1984,42 @@ bool save_csv(const std::wstring& path) {
             out << numfmt(tt);
             for (std::size_t c : cols) out << "," << numfmt(g.ds.channels[c][r]);
             out << "\n";
+        }
+    }
+    return true;
+}
+
+bool save_txt_view(const std::wstring& path) {
+    std::ofstream out(to_acp(path.c_str()), std::ios::binary);
+    if (!out) return false;
+    if (g.freq_mode) {
+        if (!g.spec_valid) return false;
+        std::vector<std::size_t> cols;
+        out << "Frequency";
+        for (std::size_t j = 0; j < g.spec.amp.size(); ++j) {
+            int ci = channel_index_by_name(g.spec.names[j]);
+            if (ci >= 0 && g.visible[ci]) { out << "\t" << current_channel_label(static_cast<std::size_t>(ci)); cols.push_back(j); }
+        }
+        out << "\r\n";
+        for (std::size_t k = 0; k < g.spec.freqs.size(); ++k) {
+            const double fr = g.spec.freqs[k];
+            if (fr < g.freq_start || fr > g.freq_end) continue;
+            out << numfmt(fr);
+            for (std::size_t j : cols) out << "\t" << numfmt(g.spec.amp[j][k]);
+            out << "\r\n";
+        }
+    } else {
+        std::vector<std::size_t> cols;
+        out << "Time";
+        for (std::size_t c = 0; c < g.ds.channel_count(); ++c)
+            if (g.visible[c]) { out << "\t" << current_channel_label(c); cols.push_back(c); }
+        out << "\r\n";
+        for (std::size_t r = 0; r < g.ds.rows(); ++r) {
+            const double tt = g.ds.time[r];
+            if (tt < g.win_start || tt > g.win_end) continue;
+            out << numfmt(tt);
+            for (std::size_t c : cols) out << "\t" << numfmt(g.ds.channels[c][r]);
+            out << "\r\n";
         }
     }
     return true;
@@ -1919,6 +2074,33 @@ void save_csv_dialog() {
         status_msg(std::wstring(g_str->msg_saved_csv) + (b ? b + 1 : path.c_str()));
     } else {
         MessageBoxW(g.main, g_str->msg_savecsv_err, g_str->msg_error_title, MB_ICONERROR);
+    }
+}
+
+const wchar_t* txt_filter() {
+    return (g_str == &kEn)
+        ? L"TXT file\0*.txt\0All files\0*.*\0"
+        : L"TXT файл\0*.txt\0Все файлы\0*.*\0";
+}
+
+const wchar_t* txt_saved_prefix() {
+    return (g_str == &kEn) ? L"Exported (TXT): " : L"Выгружено (TXT): ";
+}
+
+const wchar_t* txt_save_error() {
+    return (g_str == &kEn) ? L"Failed to export TXT." : L"Не удалось выгрузить TXT.";
+}
+
+void save_txt_dialog() {
+    if (!has_data()) { MessageBoxW(g.main, g_str->msg_openfirst, g_str->msg_nodata, MB_ICONINFORMATION); return; }
+    std::wstring def = file_stem() + (g.freq_mode ? L"_spectrum.txt" : L"_segment.txt");
+    std::wstring path;
+    if (!save_dialog(path, txt_filter(), L"txt", def)) return;
+    if (save_txt_view(path)) {
+        const wchar_t* b = wcsrchr(path.c_str(), L'\\');
+        status_msg(std::wstring(txt_saved_prefix()) + (b ? b + 1 : path.c_str()));
+    } else {
+        MessageBoxW(g.main, txt_save_error(), g_str->msg_error_title, MB_ICONERROR);
     }
 }
 
@@ -1982,91 +2164,6 @@ void show_about() {
     MessageBoxW(g.main, g_str->about_body, g_str->dlg_about_title, MB_OK | MB_ICONINFORMATION);
 }
 
-void show_rename_dialog() {
-    if (!has_data()) {
-        MessageBoxW(g.main, g_str->msg_openfirst, g_str->msg_nodata, MB_ICONINFORMATION);
-        return;
-    }
-    HINSTANCE inst = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(g.main, GWLP_HINSTANCE));
-    const int n = static_cast<int>(g.ds.channel_count());
-    const int row_h = 28;
-    const int dlg_w = 340;
-    const int dlg_h = 80 + n * row_h;
-    RECT mr; GetWindowRect(g.main, &mr);
-    int dx = mr.left + (mr.right - mr.left - dlg_w) / 2;
-    int dy = mr.top + (mr.bottom - mr.top - dlg_h) / 2;
-
-    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"LvmRenameDlg", g_str->m_rename,
-        WS_POPUP | WS_CAPTION | WS_SYSMENU, dx, dy, dlg_w, dlg_h,
-        g.main, nullptr, inst, nullptr);
-    if (!dlg) return;
-
-    HFONT font = g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
-    std::vector<HWND> edits;
-    edits.reserve(n);
-    for (int i = 0; i < n; ++i) {
-        int y = 12 + i * row_h;
-        HWND lbl = CreateWindowExW(0, L"STATIC", g.channel_labels[i].c_str(),
-            WS_CHILD | WS_VISIBLE | SS_LEFT, 12, y, 80, 20, dlg, nullptr, inst, nullptr);
-        SendMessageW(lbl, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-        HWND ed = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", g.channel_labels[i].c_str(),
-            WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 100, y, 220, 22, dlg,
-            reinterpret_cast<HMENU>(static_cast<INT_PTR>(1000 + i)), inst, nullptr);
-        SendMessageW(ed, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-        edits.push_back(ed);
-    }
-
-    int by = 16 + n * row_h;
-    HWND ok = CreateWindowExW(0, L"BUTTON", L"OK", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON | WS_TABSTOP,
-                              dlg_w - 180, by, 80, 26, dlg, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDOK)), inst, nullptr);
-    HWND cancel = CreateWindowExW(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
-                                  dlg_w - 90, by, 80, 26, dlg, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)), inst, nullptr);
-    SendMessageW(ok, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-    SendMessageW(cancel, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-
-    EnableWindow(g.main, FALSE);
-    ShowWindow(dlg, SW_SHOW);
-    UpdateWindow(dlg);
-    SetFocus(edits.empty() ? ok : edits[0]);
-
-    bool done = false;
-    MSG m;
-    while (!done && GetMessageW(&m, nullptr, 0, 0) > 0) {
-        if (m.message == WM_KEYDOWN && m.wParam == VK_RETURN) {
-            for (int i = 0; i < n; ++i) {
-                wchar_t buf[256];
-                GetWindowTextW(edits[i], buf, 256);
-                g.channel_labels[i] = buf;
-            }
-            rebuild_checks();
-            done = true;
-        } else if (m.message == WM_KEYDOWN && m.wParam == VK_ESCAPE) {
-            done = true;
-        } else if (m.message == WM_COMMAND) {
-            int id = LOWORD(m.wParam);
-            if (id == IDOK) {
-                for (int i = 0; i < n; ++i) {
-                    wchar_t buf[256];
-                    GetWindowTextW(edits[i], buf, 256);
-                    g.channel_labels[i] = buf;
-                }
-                rebuild_checks();
-                done = true;
-            } else if (id == IDCANCEL) {
-                done = true;
-            }
-        } else {
-            TranslateMessage(&m);
-            DispatchMessageW(&m);
-        }
-    }
-
-    EnableWindow(g.main, TRUE);
-    DestroyWindow(dlg);
-    SetFocus(g.main);
-    InvalidateRect(g.main, nullptr, TRUE);
-}
-
 // Refresh every checkable menu item from the current app state. Cheap, so we
 // just call it whenever a toggle changes (menu, toolbar, or accelerator).
 void sync_menu() {
@@ -2085,11 +2182,13 @@ void sync_menu() {
 
 HMENU make_menu() {
     HMENU bar = CreateMenu();
+    const wchar_t* savetxt_menu = (g_str == &kEn) ? L"Export TXT…" : L"Выгрузить TXT…";
 
     HMENU file = CreatePopupMenu();
     AppendMenuW(file, MF_STRING, IDC_OPEN, L"Открыть файл…\tCtrl+O");
     AppendMenuW(file, MF_STRING, IDC_SAVEPNG, L"Сохранить PNG…\tCtrl+S");
     AppendMenuW(file, MF_STRING, IDC_SAVECSV, L"Сохранить CSV…\tCtrl+E");
+    AppendMenuW(file, MF_STRING, IDC_SAVETXT, savetxt_menu);
     AppendMenuW(file, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(file, MF_STRING, IDM_UNDO, L"Отменить\tCtrl+Z");
     AppendMenuW(file, MF_STRING, IDM_REDO, L"Повторить\tCtrl+Shift+Z");
@@ -2112,6 +2211,7 @@ HMENU make_menu() {
     AppendMenuW(view, MF_STRING, IDM_RENAME_CHANNELS, L"Переименовать каналы…");
     AppendMenuW(view, MF_STRING, IDC_PLAY, L"Play / Pause\tПробел");
     AppendMenuW(view, MF_STRING, IDM_THEME, L"Тёмная тема\tT");
+    DeleteMenu(view, IDM_RENAME_CHANNELS, MF_BYCOMMAND);
     HMENU speed = CreatePopupMenu();
     AppendMenuW(speed, MF_STRING, IDM_SPEED_00001, L"0.0001×");
     AppendMenuW(speed, MF_STRING, IDM_SPEED_0001, L"0.001×");
@@ -2397,9 +2497,10 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 void show_welcome(HINSTANCE inst) {
     if (g.welcome_wnd) {
         hide_ui_controls();
-        ShowWindow(g.welcome_wnd, SW_SHOW);
-        SetWindowPos(g.welcome_wnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
-        UpdateWindow(g.welcome_wnd);
+        RECT rc;
+        GetClientRect(g.main, &rc);
+        SetWindowPos(g.welcome_wnd, HWND_TOP, 0, 0, rc.right, rc.bottom, SWP_SHOWWINDOW);
+        RedrawWindow(g.welcome_wnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN);
         return;
     }
     RECT rc;
@@ -2412,15 +2513,14 @@ void show_welcome(HINSTANCE inst) {
         g.main, nullptr, inst, nullptr);
     if (!g.welcome_wnd) return;
     hide_ui_controls();
-    ShowWindow(g.welcome_wnd, SW_SHOW);
-    BringWindowToTop(g.welcome_wnd);
-    SetWindowPos(g.welcome_wnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
-    UpdateWindow(g.welcome_wnd);
+    SetWindowPos(g.welcome_wnd, HWND_TOP, 0, 0, rc.right, rc.bottom, SWP_SHOWWINDOW);
+    RedrawWindow(g.welcome_wnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN);
 }
 
 // ---- UI rebuild (language switch) --------------------------------------
 void rebuild_ui() {
     if (!g.main) return;
+    finish_channel_rename(true);
     // Update menu
     SetMenu(g.main, nullptr);
     if (g.menu) DestroyMenu(g.menu);
@@ -2525,11 +2625,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case WM_SIZE:
             layout();
-            if (g.welcome_wnd && IsWindowVisible(g.welcome_wnd)) {
+            if (welcome_visible()) {
                 RECT rc;
                 GetClientRect(hwnd, &rc);
-                MoveWindow(g.welcome_wnd, 0, 0, rc.right, rc.bottom, TRUE);
-                SetWindowPos(g.welcome_wnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+                SetWindowPos(g.welcome_wnd, HWND_TOP, 0, 0, rc.right, rc.bottom, SWP_SHOWWINDOW);
+                RedrawWindow(g.welcome_wnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN);
+                return 0;
             }
             InvalidateRect(hwnd, nullptr, TRUE);
             return 0;
@@ -2546,6 +2647,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SetBkMode(dc, TRANSPARENT);
             SetTextColor(dc, g_theme->text_primary);
             SelectObject(dc, g.ui_font);
+            return reinterpret_cast<LRESULT>(g_panel_brush);
+        }
+        case WM_CTLCOLORSTATIC: {
+            HDC dc = reinterpret_cast<HDC>(wp);
+            SetBkMode(dc, TRANSPARENT);
+            SetTextColor(dc, g_theme->text_primary);
+            return reinterpret_cast<LRESULT>(g_panel_brush);
+        }
+        case WM_CTLCOLOREDIT: {
+            HDC dc = reinterpret_cast<HDC>(wp);
+            SetBkColor(dc, g_theme->bg_panel);
+            SetTextColor(dc, g_theme->text_primary);
             return reinterpret_cast<LRESULT>(g_panel_brush);
         }
         case WM_PAINT: {
@@ -2690,6 +2803,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 case IDC_OPEN: open_file(); return 0;
                 case IDC_SAVEPNG: save_png_dialog(); return 0;
                 case IDC_SAVECSV: save_csv_dialog(); return 0;
+                case IDC_SAVETXT: save_txt_dialog(); return 0;
                 case IDM_EXIT: DestroyWindow(hwnd); return 0;
                 case IDC_MODE:
                     g.freq_mode = !g.freq_mode;
@@ -2742,9 +2856,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     sync_menu();
                     if (g.welcome_wnd) InvalidateRect(g.welcome_wnd, nullptr, TRUE);
                     InvalidateRect(hwnd, nullptr, TRUE);
-                    return 0;
-                case IDM_RENAME_CHANNELS:
-                    show_rename_dialog();
                     return 0;
                 case IDM_ADD_VLINE:
                     if (!has_data()) { MessageBoxW(hwnd, g_str->msg_openfirst, g_str->msg_nodata, MB_ICONINFORMATION); return 0; }
@@ -2824,6 +2935,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 const int ci = id - IDC_CHAN_BASE;
                 g.visible[ci] = (SendMessageW(g.checks[ci], BM_GETCHECK, 0, 0) == BST_CHECKED);
                 InvalidateRect(hwnd, nullptr, TRUE);
+            } else if (id >= IDC_CHAN_LABEL_BASE &&
+                       id < IDC_CHAN_LABEL_BASE + static_cast<int>(g.channel_labels.size()) &&
+                       HIWORD(wp) == STN_CLICKED) {
+                start_channel_rename(id - IDC_CHAN_LABEL_BASE);
             }
             return 0;
         }
@@ -3168,7 +3283,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int show) {
     RegisterClassExW(&rc);
 
     g.main = CreateWindowExW(0, wc.lpszClassName, g_str->app_title,
-                             WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1180, 720,
+                             WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT, 1180, 720,
                              nullptr, nullptr, inst, nullptr);
     if (!g.main) return 1;
 
