@@ -25,3 +25,9 @@ tests/_tmp_*
 
 # Local test output
 *.csv
+
+# Local release / API scratch files
+build_out.txt
+check_rel.json
+curl_err*.txt
+rel_*.json

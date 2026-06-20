@@ -83,7 +83,6 @@ enum {
     IDM_CLEAR_POINTS,
     IDM_HOTKEYS,
     IDM_ABOUT,
-    IDM_RENAME_CHANNELS, // rename channel display names
     IDS_COLOR,          // settings panel: marker colour button
     IDW_START,          // welcome screen: start working
 
@@ -211,7 +210,6 @@ struct Strings {
     const wchar_t* m_vline; const wchar_t* m_hline; const wchar_t* m_clearlines;
     const wchar_t* m_addmarker; const wchar_t* m_clearmarkers;
     const wchar_t* m_hotkeys; const wchar_t* m_about;
-    const wchar_t* m_rename;
     const wchar_t* btn_open; const wchar_t* btn_png; const wchar_t* btn_csv; const wchar_t* btn_timehz; const wchar_t* btn_play; const wchar_t* btn_pause;
     const wchar_t* btn_measure; const wchar_t* btn_reset; const wchar_t* btn_autoy; const wchar_t* btn_settings;
     const wchar_t* panel_channels;
@@ -265,7 +263,6 @@ static const Strings kRu = {
     L"Вертикальная\tL", L"Горизонтальная\tH", L"Очистить",
     L"Добавить\tK", L"Очистить",
     L"Горячие клавиши…\tF1", L"О программе…",
-    L"Переименовать каналы…",
     L"Открыть", L"PNG", L"CSV", L"Время/Гц", L"▶ Play", L"⏸ Пауза", L"Точки", L"Сброс", L"Auto zoom", L"Настройки",
     L"Каналы",
     L"Время", L"Гц (FFT)", L"Каналов", L"Точек", L"Окно", L"Y: авто", L"Y: фикс.", L"Линий", L"Маркеров", L"Скорость",
@@ -318,7 +315,6 @@ static const Strings kEn = {
     L"Vertical\tL", L"Horizontal\tH", L"Clear",
     L"Add\tK", L"Clear",
     L"Keyboard shortcuts…\tF1", L"About…",
-    L"Rename channels…",
     L"Open", L"PNG", L"CSV", L"Time/Hz", L"▶ Play", L"⏸ Pause", L"Points", L"Reset", L"Auto zoom", L"Settings",
     L"Channels",
     L"Time", L"Hz (FFT)", L"Channels", L"Points", L"Window", L"Y: auto", L"Y: fixed", L"Lines", L"Markers", L"Speed",
@@ -2208,10 +2204,8 @@ HMENU make_menu() {
     AppendMenuW(view, MF_STRING, IDC_AUTOY, L"Auto Y");
     AppendMenuW(view, MF_STRING, IDM_VISMOOTH, L"Сглаживание\tC");
     AppendMenuW(view, MF_STRING, IDM_VPAN, L"Вертикальное панорамирование\tP");
-    AppendMenuW(view, MF_STRING, IDM_RENAME_CHANNELS, L"Переименовать каналы…");
     AppendMenuW(view, MF_STRING, IDC_PLAY, L"Play / Pause\tПробел");
     AppendMenuW(view, MF_STRING, IDM_THEME, L"Тёмная тема\tT");
-    DeleteMenu(view, IDM_RENAME_CHANNELS, MF_BYCOMMAND);
     HMENU speed = CreatePopupMenu();
     AppendMenuW(speed, MF_STRING, IDM_SPEED_00001, L"0.0001×");
     AppendMenuW(speed, MF_STRING, IDM_SPEED_0001, L"0.001×");
@@ -3271,16 +3265,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int show) {
     wcw.lpszClassName = L"LvmWelcome";
     wcw.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
     RegisterClassExW(&wcw);
-
-    // Rename dialog window class.
-    WNDCLASSEXW rc = {};
-    rc.cbSize = sizeof(rc);
-    rc.lpfnWndProc = DefWindowProcW;
-    rc.hInstance = inst;
-    rc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    rc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
-    rc.lpszClassName = L"LvmRenameDlg";
-    RegisterClassExW(&rc);
 
     g.main = CreateWindowExW(0, wc.lpszClassName, g_str->app_title,
                              WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT, 1180, 720,
