@@ -39,6 +39,7 @@
 #include <cstring>
 #include <fstream>
 #include <limits>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -225,6 +226,16 @@ static const Theme kDarkTheme = {
 const Theme* g_theme = &kLightTheme;
 HBRUSH g_panel_brush = nullptr;
 HBRUSH g_welcome_brush = nullptr;
+HBRUSH g_welcome_hero_brush = nullptr;
+HBRUSH g_welcome_action_brush = nullptr;
+
+struct OwnerDrawMenuEntry {
+    std::wstring text;
+    bool top_level = false;
+    bool popup = false;
+};
+
+std::vector<std::unique_ptr<OwnerDrawMenuEntry>> g_menu_text_storage;
 
 struct SpeedPromptState {
     HWND wnd = nullptr;
@@ -241,6 +252,19 @@ void update_theme_brushes() {
     g_panel_brush = CreateSolidBrush(g_theme->bg_panel);
     if (g_welcome_brush) DeleteObject(g_welcome_brush);
     g_welcome_brush = CreateSolidBrush(g_theme->bg_main);
+    if (g_welcome_hero_brush) DeleteObject(g_welcome_hero_brush);
+    g_welcome_hero_brush = CreateSolidBrush(g_theme->bg_panel);
+    if (g_welcome_action_brush) DeleteObject(g_welcome_action_brush);
+    g_welcome_action_brush = CreateSolidBrush(g_theme->btn_bg);
+}
+
+const OwnerDrawMenuEntry* stash_menu_entry(const std::wstring& text, bool top_level, bool popup) {
+    auto entry = std::make_unique<OwnerDrawMenuEntry>();
+    entry->text = text;
+    entry->top_level = top_level;
+    entry->popup = popup;
+    g_menu_text_storage.push_back(std::move(entry));
+    return g_menu_text_storage.back().get();
 }
 
 const int IDC_SPEED_PROMPT_EDIT = 6200;
@@ -1220,6 +1244,28 @@ LRESULT CALLBACK SpeedPromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_CLOSE:
             DestroyWindow(hwnd);
             return 0;
+        case WM_ERASEBKGND: {
+            HDC dc = reinterpret_cast<HDC>(wp);
+            RECT rc{};
+            GetClientRect(hwnd, &rc);
+            HBRUSH b = CreateSolidBrush(g_theme->bg_panel);
+            FillRect(dc, &rc, b);
+            DeleteObject(b);
+            return 1;
+        }
+        case WM_CTLCOLORSTATIC:
+        case WM_CTLCOLORBTN: {
+            HDC dc = reinterpret_cast<HDC>(wp);
+            SetBkMode(dc, TRANSPARENT);
+            SetTextColor(dc, g_theme->text_primary);
+            return reinterpret_cast<LRESULT>(g_panel_brush);
+        }
+        case WM_CTLCOLOREDIT: {
+            HDC dc = reinterpret_cast<HDC>(wp);
+            SetBkColor(dc, g_theme->bg_panel);
+            SetTextColor(dc, g_theme->text_primary);
+            return reinterpret_cast<LRESULT>(g_panel_brush);
+        }
         case WM_DESTROY:
             g_speed_prompt.done = true;
             g_speed_prompt.wnd = nullptr;
@@ -1236,7 +1282,7 @@ bool prompt_custom_play_speed(double& out_speed) {
         wc.lpfnWndProc = SpeedPromptProc;
         wc.hInstance = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(g.main, GWLP_HINSTANCE));
         wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-        wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+        wc.hbrBackground = nullptr;
         wc.lpszClassName = L"LvmSpeedPrompt";
         atom = RegisterClassExW(&wc);
     }
@@ -1682,7 +1728,9 @@ void draw_axes(HDC dc, const RECT& p, double x0, double x1, double y0, double y1
     DeleteObject(minor);
 
     SelectObject(dc, frame);
+    HGDIOBJ old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
     Rectangle(dc, p.left, p.top, p.right, p.bottom);
+    SelectObject(dc, old_brush);
     draw_text(dc, (p.left + p.right) / 2, p.bottom + 20, xlabel, TA_CENTER | TA_TOP);
 
     SelectObject(dc, old_font);
@@ -3016,7 +3064,8 @@ void layout_welcome_controls(HWND hwnd) {
     place(IDW_INTRO, hx, hy, hw, intro_h);
     hy += intro_h + 18;
 
-    const int feature_bottom = layout.hero.bottom - hero_pad;
+    const int footer_reserve = layout.stacked ? 76 : 64;
+    const int feature_bottom = layout.hero.bottom - hero_pad - footer_reserve;
     place(IDW_FEATURES, hx, hy, hw, max(72, feature_bottom - hy));
 
     const int action_pad = layout.stacked ? 20 : 24;
@@ -3114,6 +3163,163 @@ std::wstring toolbar_hover_text(HWND btn) {
     return L"";
 }
 
+void append_menu_popup_owner_draw(HMENU bar, HMENU popup, const std::wstring& text) {
+    AppendMenuW(
+        bar,
+        MF_OWNERDRAW | MF_POPUP,
+        reinterpret_cast<UINT_PTR>(popup),
+        reinterpret_cast<LPCWSTR>(stash_menu_entry(text, true, true)));
+}
+
+void append_submenu_popup_owner_draw(HMENU menu, HMENU popup, const std::wstring& text) {
+    AppendMenuW(
+        menu,
+        MF_OWNERDRAW | MF_POPUP,
+        reinterpret_cast<UINT_PTR>(popup),
+        reinterpret_cast<LPCWSTR>(stash_menu_entry(text, false, true)));
+}
+
+void append_menu_item_owner_draw(HMENU menu, UINT id, const std::wstring& text) {
+    AppendMenuW(
+        menu,
+        MF_OWNERDRAW | MF_STRING,
+        id,
+        reinterpret_cast<LPCWSTR>(stash_menu_entry(text, false, false)));
+}
+
+void modify_menu_item_owner_draw(HMENU menu, UINT id, const std::wstring& text) {
+    ModifyMenuW(
+        menu,
+        id,
+        MF_BYCOMMAND | MF_OWNERDRAW,
+        id,
+        reinterpret_cast<LPCWSTR>(stash_menu_entry(text, false, false)));
+}
+
+std::wstring menu_item_left_text(const std::wstring& text) {
+    std::size_t tab = text.find(L'\t');
+    return (tab == std::wstring::npos) ? text : text.substr(0, tab);
+}
+
+std::wstring menu_item_right_text(const std::wstring& text) {
+    std::size_t tab = text.find(L'\t');
+    return (tab == std::wstring::npos) ? L"" : text.substr(tab + 1);
+}
+
+void measure_owner_draw_menu(MEASUREITEMSTRUCT* mis) {
+    if (!mis || mis->CtlType != ODT_MENU) return;
+    const OwnerDrawMenuEntry* entry = reinterpret_cast<const OwnerDrawMenuEntry*>(mis->itemData);
+    const std::wstring text = entry ? entry->text : L"";
+    const std::wstring left = menu_item_left_text(text);
+    const std::wstring right = menu_item_right_text(text);
+    HDC dc = GetDC(g.main ? g.main : nullptr);
+    HFONT font = g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+    HGDIOBJ old_font = SelectObject(dc, font);
+    SIZE left_sz{};
+    SIZE right_sz{};
+    GetTextExtentPoint32W(dc, left.c_str(), static_cast<int>(left.size()), &left_sz);
+    GetTextExtentPoint32W(dc, right.c_str(), static_cast<int>(right.size()), &right_sz);
+    SelectObject(dc, old_font);
+    ReleaseDC(g.main ? g.main : nullptr, dc);
+    if (entry && entry->top_level) {
+        mis->itemWidth = left_sz.cx + 22;
+        mis->itemHeight = max(24u, static_cast<UINT>(left_sz.cy + 10));
+        return;
+    }
+
+    const UINT check_col = 28;
+    const UINT left_pad = 10;
+    const UINT right_pad = 12;
+    const UINT gap = right.empty() ? 0 : 24;
+    const UINT arrow_space = (entry && entry->popup) ? 18 : 0;
+    mis->itemWidth = check_col + left_pad + left_sz.cx + gap + right_sz.cx + arrow_space + right_pad;
+    mis->itemHeight = max(24u, static_cast<UINT>(max(left_sz.cy, right_sz.cy) + 10));
+}
+
+void draw_owner_draw_menu(const DRAWITEMSTRUCT* dis) {
+    if (!dis || dis->CtlType != ODT_MENU) return;
+    const OwnerDrawMenuEntry* entry = reinterpret_cast<const OwnerDrawMenuEntry*>(dis->itemData);
+    const std::wstring text = entry ? entry->text : L"";
+    const std::wstring left = menu_item_left_text(text);
+    const std::wstring right = menu_item_right_text(text);
+    RECT r = dis->rcItem;
+    const bool selected = (dis->itemState & ODS_SELECTED) != 0;
+    const bool disabled = (dis->itemState & ODS_DISABLED) != 0;
+    const bool checked = (dis->itemState & ODS_CHECKED) != 0;
+    COLORREF bg = selected ? g_theme->btn_hover : g_theme->bg_toolbar;
+    COLORREF text_col = disabled ? g_theme->text_secondary : g_theme->text_primary;
+    HBRUSH bg_brush = CreateSolidBrush(bg);
+    FillRect(dis->hDC, &r, bg_brush);
+    DeleteObject(bg_brush);
+    SetBkMode(dis->hDC, TRANSPARENT);
+    SetTextColor(dis->hDC, text_col);
+    HFONT font = g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+    HGDIOBJ old_font = SelectObject(dis->hDC, font);
+    if (entry && entry->top_level) {
+        DrawTextW(
+            dis->hDC, left.c_str(), -1, &r,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        SelectObject(dis->hDC, old_font);
+        return;
+    }
+
+    RECT check_rect = r;
+    check_rect.right = check_rect.left + 28;
+    RECT left_rect = r;
+    left_rect.left = check_rect.right + 10;
+    left_rect.right = r.right - 12;
+    if (!right.empty()) left_rect.right -= 80;
+    if (entry && entry->popup) left_rect.right -= 18;
+    RECT right_rect = r;
+    right_rect.left = max(left_rect.right + 8, r.right - 92);
+    right_rect.right = r.right - ((entry && entry->popup) ? 24 : 12);
+    DrawTextW(
+        dis->hDC, left.c_str(), -1, &left_rect,
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+    if (!right.empty()) {
+        DrawTextW(
+            dis->hDC, right.c_str(), -1, &right_rect,
+            DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    }
+
+    if (checked) {
+        RECT box = check_rect;
+        box.left += 7;
+        box.right = box.left + 14;
+        box.top = r.top + max(0L, ((r.bottom - r.top) - 14) / 2);
+        box.bottom = box.top + 14;
+        HBRUSH accent_brush = CreateSolidBrush(g_theme->btn_active);
+        FillRect(dis->hDC, &box, accent_brush);
+        DeleteObject(accent_brush);
+
+        HPEN pen = CreatePen(PS_SOLID, 2, RGB(255, 255, 255));
+        HGDIOBJ old_pen = SelectObject(dis->hDC, pen);
+        MoveToEx(dis->hDC, box.left + 3, box.top + 7, nullptr);
+        LineTo(dis->hDC, box.left + 6, box.top + 10);
+        LineTo(dis->hDC, box.right - 3, box.top + 4);
+        SelectObject(dis->hDC, old_pen);
+        DeleteObject(pen);
+    }
+
+    if (entry && entry->popup) {
+        POINT pts[3] = {
+            { r.right - 12, r.top + (r.bottom - r.top) / 2 - 4 },
+            { r.right - 12, r.top + (r.bottom - r.top) / 2 + 4 },
+            { r.right - 7,  r.top + (r.bottom - r.top) / 2 }
+        };
+        HBRUSH arrow_brush = CreateSolidBrush(text_col);
+        HPEN arrow_pen = CreatePen(PS_SOLID, 1, text_col);
+        HGDIOBJ old_brush = SelectObject(dis->hDC, arrow_brush);
+        HGDIOBJ old_pen = SelectObject(dis->hDC, arrow_pen);
+        Polygon(dis->hDC, pts, 3);
+        SelectObject(dis->hDC, old_pen);
+        SelectObject(dis->hDC, old_brush);
+        DeleteObject(arrow_pen);
+        DeleteObject(arrow_brush);
+    }
+    SelectObject(dis->hDC, old_font);
+}
+
 const wchar_t* settings_button_text() {
     return (g_str == &kEn) ? L"Settings" : L"Настройки";
 }
@@ -3188,6 +3394,21 @@ void redraw_toolbar_buttons() {
     for (HWND btn : g.buttons) redraw_button(btn);
 }
 
+void refresh_theme_windows() {
+    auto redraw = [](HWND wnd) {
+        if (!wnd || !IsWindow(wnd)) return;
+        RedrawWindow(
+            wnd, nullptr, nullptr,
+            RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    };
+    redraw(g.main);
+    redraw(g.settings_wnd);
+    redraw(g.welcome_wnd);
+    redraw(g.channel_edit);
+    for (HWND h : g.checks) redraw(h);
+    for (HWND h : g.check_labels) redraw(h);
+}
+
 void draw_themed_button(HDC dc, const RECT& r, const wchar_t* txt, bool pressed, bool active, bool hover) {
     COLORREF bg_col, border_col, text_col;
     if (active && pressed) {
@@ -3244,7 +3465,7 @@ void sync_menu() {
     chk(IDM_LANG_RU, g_str == &kRu);
     chk(IDM_LANG_EN, g_str == &kEn);
     std::wstring theme_label = menu_text(g_theme == &kDarkTheme ? g_str->theme_light : g_str->theme_dark, IDM_THEME);
-    ModifyMenuW(g.menu, IDM_THEME, MF_BYCOMMAND | MF_STRING, IDM_THEME, theme_label.c_str());
+    modify_menu_item_owner_draw(g.menu, IDM_THEME, theme_label);
     redraw_toolbar_buttons();
 }
 
@@ -3275,16 +3496,16 @@ HMENU make_menu() {
         std::wstring save_csv_text = menu_text(en ? L"Save CSV…" : L"Сохранить CSV…", IDC_SAVECSV);
         std::wstring undo_text = menu_text(en ? L"Undo" : L"Отменить", IDM_UNDO);
         std::wstring redo_text = menu_text(en ? L"Redo" : L"Повторить", IDM_REDO);
-        AppendMenuW(file, MF_STRING, IDC_OPEN, open_text.c_str());
-        AppendMenuW(file, MF_STRING, IDC_SAVEPNG, save_png_text.c_str());
-        AppendMenuW(file, MF_STRING, IDC_SAVECSV, save_csv_text.c_str());
-        AppendMenuW(file, MF_STRING, IDC_SAVETXT, savetxt_menu);
+        append_menu_item_owner_draw(file, IDC_OPEN, open_text);
+        append_menu_item_owner_draw(file, IDC_SAVEPNG, save_png_text);
+        append_menu_item_owner_draw(file, IDC_SAVECSV, save_csv_text);
+        append_menu_item_owner_draw(file, IDC_SAVETXT, savetxt_menu);
         AppendMenuW(file, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(file, MF_STRING, IDM_UNDO, undo_text.c_str());
-        AppendMenuW(file, MF_STRING, IDM_REDO, redo_text.c_str());
+        append_menu_item_owner_draw(file, IDM_UNDO, undo_text);
+        append_menu_item_owner_draw(file, IDM_REDO, redo_text);
         AppendMenuW(file, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(file, MF_STRING, IDM_EXIT, en ? L"Exit\tAlt+F4" : L"Выход\tAlt+F4");
-        AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(file), en ? L"File" : L"Файл");
+        append_menu_item_owner_draw(file, IDM_EXIT, en ? L"Exit\tAlt+F4" : L"Выход\tAlt+F4");
+        append_menu_popup_owner_draw(bar, file, en ? L"File" : L"Файл");
 
         HMENU view = CreatePopupMenu();
         std::wstring mode_time_text = menu_text(en ? L"Time" : L"Время", IDM_MODE_TIME);
@@ -3299,51 +3520,51 @@ HMENU make_menu() {
         std::wstring vpan_text = menu_text(en ? L"Vertical pan" : L"Вертикальное панорамирование", IDM_VPAN);
         std::wstring play_text = menu_text(L"Play / Pause", IDC_PLAY);
         std::wstring theme_text = menu_text(en ? L"Dark theme" : L"Тёмная тема", IDM_THEME);
-        AppendMenuW(view, MF_STRING, IDM_MODE_TIME, mode_time_text.c_str());
-        AppendMenuW(view, MF_STRING, IDM_MODE_FREQ, mode_freq_text.c_str());
+        append_menu_item_owner_draw(view, IDM_MODE_TIME, mode_time_text);
+        append_menu_item_owner_draw(view, IDM_MODE_FREQ, mode_freq_text);
         AppendMenuW(view, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(view, MF_STRING, IDC_ZOOMIN, zoom_in_text.c_str());
-        AppendMenuW(view, MF_STRING, IDC_ZOOMOUT, zoom_out_text.c_str());
-        AppendMenuW(view, MF_STRING, IDC_RESET, reset_text.c_str());
-        AppendMenuW(view, MF_STRING, IDC_GOTO_START, start_text.c_str());
-        AppendMenuW(view, MF_STRING, IDC_GOTO_END, end_text.c_str());
+        append_menu_item_owner_draw(view, IDC_ZOOMIN, zoom_in_text);
+        append_menu_item_owner_draw(view, IDC_ZOOMOUT, zoom_out_text);
+        append_menu_item_owner_draw(view, IDC_RESET, reset_text);
+        append_menu_item_owner_draw(view, IDC_GOTO_START, start_text);
+        append_menu_item_owner_draw(view, IDC_GOTO_END, end_text);
         AppendMenuW(view, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(view, MF_STRING, IDC_AUTOY, autoy_text.c_str());
-        AppendMenuW(view, MF_STRING, IDM_VISMOOTH, smooth_text.c_str());
-        AppendMenuW(view, MF_STRING, IDM_VPAN, vpan_text.c_str());
-        AppendMenuW(view, MF_STRING, IDC_PLAY, play_text.c_str());
-        AppendMenuW(view, MF_STRING, IDM_THEME, theme_text.c_str());
-        AppendMenuW(view, MF_STRING, IDM_SPEED_CUSTOM, speed_menu_text());
-        AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(view), en ? L"View" : L"Вид");
+        append_menu_item_owner_draw(view, IDC_AUTOY, autoy_text);
+        append_menu_item_owner_draw(view, IDM_VISMOOTH, smooth_text);
+        append_menu_item_owner_draw(view, IDM_VPAN, vpan_text);
+        append_menu_item_owner_draw(view, IDC_PLAY, play_text);
+        append_menu_item_owner_draw(view, IDM_THEME, theme_text);
+        append_menu_item_owner_draw(view, IDM_SPEED_CUSTOM, speed_menu_text());
+        append_menu_popup_owner_draw(bar, view, en ? L"View" : L"Вид");
 
         HMENU tools = CreatePopupMenu();
         std::wstring measure_text = menu_text(en ? L"Points" : L"Точки", IDC_MEASURE);
         std::wstring marker_text = menu_text(en ? L"Marker" : L"Маркер", IDM_ADD_MARKER);
         std::wstring vline_text = menu_text(en ? L"Vertical line" : L"Вертикальная линия", IDM_ADD_VLINE);
         std::wstring hline_text = menu_text(en ? L"Horizontal line" : L"Горизонтальная линия", IDM_ADD_HLINE);
-        AppendMenuW(tools, MF_STRING, IDC_MEASURE, measure_text.c_str());
-        AppendMenuW(tools, MF_STRING, IDM_ADD_MARKER, marker_text.c_str());
-        AppendMenuW(tools, MF_STRING, IDM_ADD_VLINE, vline_text.c_str());
-        AppendMenuW(tools, MF_STRING, IDM_ADD_HLINE, hline_text.c_str());
+        append_menu_item_owner_draw(tools, IDC_MEASURE, measure_text);
+        append_menu_item_owner_draw(tools, IDM_ADD_MARKER, marker_text);
+        append_menu_item_owner_draw(tools, IDM_ADD_VLINE, vline_text);
+        append_menu_item_owner_draw(tools, IDM_ADD_HLINE, hline_text);
         AppendMenuW(tools, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(tools, MF_STRING, IDM_CLEAR_POINTS, en ? L"Clear points" : L"Очистить точки");
-        AppendMenuW(tools, MF_STRING, IDM_CLEAR_MARKERS, en ? L"Clear markers" : L"Очистить маркеры");
-        AppendMenuW(tools, MF_STRING, IDM_CLEAR_LINES, en ? L"Clear lines" : L"Очистить линии");
-        AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(tools), en ? L"Tools" : L"Инструменты");
+        append_menu_item_owner_draw(tools, IDM_CLEAR_POINTS, en ? L"Clear points" : L"Очистить точки");
+        append_menu_item_owner_draw(tools, IDM_CLEAR_MARKERS, en ? L"Clear markers" : L"Очистить маркеры");
+        append_menu_item_owner_draw(tools, IDM_CLEAR_LINES, en ? L"Clear lines" : L"Очистить линии");
+        append_menu_popup_owner_draw(bar, tools, en ? L"Tools" : L"Инструменты");
 
         HMENU settings = CreatePopupMenu();
         HMENU lang = CreatePopupMenu();
-        AppendMenuW(lang, MF_STRING, IDM_LANG_RU, g_str->lang_ru);
-        AppendMenuW(lang, MF_STRING, IDM_LANG_EN, g_str->lang_en);
-        AppendMenuW(settings, MF_STRING, IDC_PTSETTINGS, en ? L"General settings…" : L"Общие настройки…");
-        AppendMenuW(settings, MF_POPUP, reinterpret_cast<UINT_PTR>(lang), en ? L"Language" : L"Язык");
-        AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(settings), en ? L"Settings" : L"Настройки");
+        append_menu_item_owner_draw(lang, IDM_LANG_RU, g_str->lang_ru);
+        append_menu_item_owner_draw(lang, IDM_LANG_EN, g_str->lang_en);
+        append_menu_item_owner_draw(settings, IDC_PTSETTINGS, en ? L"General settings…" : L"Общие настройки…");
+        append_submenu_popup_owner_draw(settings, lang, en ? L"Language" : L"Язык");
+        append_menu_popup_owner_draw(bar, settings, en ? L"Settings" : L"Настройки");
 
         HMENU help = CreatePopupMenu();
         std::wstring hotkeys_text = menu_text(en ? L"Keyboard shortcuts…" : L"Горячие клавиши…", IDM_HOTKEYS);
-        AppendMenuW(help, MF_STRING, IDM_HOTKEYS, hotkeys_text.c_str());
-        AppendMenuW(help, MF_STRING, IDM_ABOUT, en ? L"About…" : L"О программе…");
-        AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(help), en ? L"Help" : L"Справка");
+        append_menu_item_owner_draw(help, IDM_HOTKEYS, hotkeys_text);
+        append_menu_item_owner_draw(help, IDM_ABOUT, en ? L"About…" : L"О программе…");
+        append_menu_popup_owner_draw(bar, help, en ? L"Help" : L"Справка");
         return bar;
     }
 
@@ -3362,16 +3583,16 @@ HMENU make_menu() {
         std::wstring save_csv_text = menu_text(en ? L"Save CSV…" : L"Сохранить CSV…", IDC_SAVECSV);
         std::wstring undo_text = menu_text(en ? L"Undo" : L"Отменить", IDM_UNDO);
         std::wstring redo_text = menu_text(en ? L"Redo" : L"Повторить", IDM_REDO);
-        AppendMenuW(file, MF_STRING, IDC_OPEN, open_text.c_str());
-        AppendMenuW(file, MF_STRING, IDC_SAVEPNG, save_png_text.c_str());
-        AppendMenuW(file, MF_STRING, IDC_SAVECSV, save_csv_text.c_str());
-        AppendMenuW(file, MF_STRING, IDC_SAVETXT, savetxt_menu);
+        append_menu_item_owner_draw(file, IDC_OPEN, open_text);
+        append_menu_item_owner_draw(file, IDC_SAVEPNG, save_png_text);
+        append_menu_item_owner_draw(file, IDC_SAVECSV, save_csv_text);
+        append_menu_item_owner_draw(file, IDC_SAVETXT, savetxt_menu);
         AppendMenuW(file, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(file, MF_STRING, IDM_UNDO, undo_text.c_str());
-        AppendMenuW(file, MF_STRING, IDM_REDO, redo_text.c_str());
+        append_menu_item_owner_draw(file, IDM_UNDO, undo_text);
+        append_menu_item_owner_draw(file, IDM_REDO, redo_text);
         AppendMenuW(file, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(file, MF_STRING, IDM_EXIT, en ? L"Exit\tAlt+F4" : L"Выход\tAlt+F4");
-        AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(file), menu_file);
+        append_menu_item_owner_draw(file, IDM_EXIT, en ? L"Exit\tAlt+F4" : L"Выход\tAlt+F4");
+        append_menu_popup_owner_draw(bar, file, menu_file);
 
         HMENU view = CreatePopupMenu();
         std::wstring mode_time_text = menu_text(en ? L"Time" : L"Время", IDM_MODE_TIME);
@@ -3386,108 +3607,108 @@ HMENU make_menu() {
         std::wstring vpan_text = menu_text(en ? L"Vertical pan" : L"Вертикальное панорамирование", IDM_VPAN);
         std::wstring play_text = menu_text(L"Play / Pause", IDC_PLAY);
         std::wstring theme_text = menu_text(en ? L"Dark theme" : L"Тёмная тема", IDM_THEME);
-        AppendMenuW(view, MF_STRING, IDM_MODE_TIME, mode_time_text.c_str());
-        AppendMenuW(view, MF_STRING, IDM_MODE_FREQ, mode_freq_text.c_str());
+        append_menu_item_owner_draw(view, IDM_MODE_TIME, mode_time_text);
+        append_menu_item_owner_draw(view, IDM_MODE_FREQ, mode_freq_text);
         AppendMenuW(view, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(view, MF_STRING, IDC_ZOOMIN, zoom_in_text.c_str());
-        AppendMenuW(view, MF_STRING, IDC_ZOOMOUT, zoom_out_text.c_str());
-        AppendMenuW(view, MF_STRING, IDC_RESET, reset_text.c_str());
-        AppendMenuW(view, MF_STRING, IDC_GOTO_START, start_text.c_str());
-        AppendMenuW(view, MF_STRING, IDC_GOTO_END, end_text.c_str());
+        append_menu_item_owner_draw(view, IDC_ZOOMIN, zoom_in_text);
+        append_menu_item_owner_draw(view, IDC_ZOOMOUT, zoom_out_text);
+        append_menu_item_owner_draw(view, IDC_RESET, reset_text);
+        append_menu_item_owner_draw(view, IDC_GOTO_START, start_text);
+        append_menu_item_owner_draw(view, IDC_GOTO_END, end_text);
         AppendMenuW(view, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(view, MF_STRING, IDC_AUTOY, autoy_text.c_str());
-        AppendMenuW(view, MF_STRING, IDM_VISMOOTH, smooth_text.c_str());
-        AppendMenuW(view, MF_STRING, IDM_VPAN, vpan_text.c_str());
-        AppendMenuW(view, MF_STRING, IDC_PLAY, play_text.c_str());
-        AppendMenuW(view, MF_STRING, IDM_THEME, theme_text.c_str());
-        AppendMenuW(view, MF_STRING, IDM_SPEED_CUSTOM, speed_menu_text());
-        AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(view), menu_view);
+        append_menu_item_owner_draw(view, IDC_AUTOY, autoy_text);
+        append_menu_item_owner_draw(view, IDM_VISMOOTH, smooth_text);
+        append_menu_item_owner_draw(view, IDM_VPAN, vpan_text);
+        append_menu_item_owner_draw(view, IDC_PLAY, play_text);
+        append_menu_item_owner_draw(view, IDM_THEME, theme_text);
+        append_menu_item_owner_draw(view, IDM_SPEED_CUSTOM, speed_menu_text());
+        append_menu_popup_owner_draw(bar, view, menu_view);
 
         HMENU meas = CreatePopupMenu();
         std::wstring measure_text = menu_text(en ? L"Points" : L"Точки", IDC_MEASURE);
-        AppendMenuW(meas, MF_STRING, IDC_MEASURE, measure_text.c_str());
-        AppendMenuW(meas, MF_STRING, IDC_PTSETTINGS, en ? L"Settings…" : L"Настройки…");
+        append_menu_item_owner_draw(meas, IDC_MEASURE, measure_text);
+        append_menu_item_owner_draw(meas, IDC_PTSETTINGS, en ? L"Settings…" : L"Настройки…");
         AppendMenuW(meas, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(meas, MF_STRING, IDM_CLEAR_POINTS, en ? L"Clear\tDelete" : L"Очистить\tDelete");
-        AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(meas), menu_points);
+        append_menu_item_owner_draw(meas, IDM_CLEAR_POINTS, en ? L"Clear\tDelete" : L"Очистить\tDelete");
+        append_menu_popup_owner_draw(bar, meas, menu_points);
 
         HMENU lines = CreatePopupMenu();
         std::wstring vline_text = menu_text(en ? L"Vertical" : L"Вертикальная", IDM_ADD_VLINE);
         std::wstring hline_text = menu_text(en ? L"Horizontal" : L"Горизонтальная", IDM_ADD_HLINE);
-        AppendMenuW(lines, MF_STRING, IDM_ADD_VLINE, vline_text.c_str());
-        AppendMenuW(lines, MF_STRING, IDM_ADD_HLINE, hline_text.c_str());
+        append_menu_item_owner_draw(lines, IDM_ADD_VLINE, vline_text);
+        append_menu_item_owner_draw(lines, IDM_ADD_HLINE, hline_text);
         AppendMenuW(lines, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(lines, MF_STRING, IDM_CLEAR_LINES, en ? L"Clear" : L"Очистить");
-        AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(lines), menu_lines);
+        append_menu_item_owner_draw(lines, IDM_CLEAR_LINES, en ? L"Clear" : L"Очистить");
+        append_menu_popup_owner_draw(bar, lines, menu_lines);
 
         HMENU markers = CreatePopupMenu();
         std::wstring marker_text = menu_text(en ? L"Add" : L"Добавить", IDM_ADD_MARKER);
-        AppendMenuW(markers, MF_STRING, IDM_ADD_MARKER, marker_text.c_str());
+        append_menu_item_owner_draw(markers, IDM_ADD_MARKER, marker_text);
         AppendMenuW(markers, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(markers, MF_STRING, IDM_CLEAR_MARKERS, en ? L"Clear" : L"Очистить");
-        AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(markers), menu_markers);
+        append_menu_item_owner_draw(markers, IDM_CLEAR_MARKERS, en ? L"Clear" : L"Очистить");
+        append_menu_popup_owner_draw(bar, markers, menu_markers);
 
         HMENU help = CreatePopupMenu();
         std::wstring hotkeys_text = menu_text(en ? L"Keyboard shortcuts…" : L"Горячие клавиши…", IDM_HOTKEYS);
-        AppendMenuW(help, MF_STRING, IDM_HOTKEYS, hotkeys_text.c_str());
-        AppendMenuW(help, MF_STRING, IDM_ABOUT, en ? L"About…" : L"О программе…");
-        AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(help), menu_help);
+        append_menu_item_owner_draw(help, IDM_HOTKEYS, hotkeys_text);
+        append_menu_item_owner_draw(help, IDM_ABOUT, en ? L"About…" : L"О программе…");
+        append_menu_popup_owner_draw(bar, help, menu_help);
         return bar;
     }
 
     HMENU file = CreatePopupMenu();
-    AppendMenuW(file, MF_STRING, IDC_OPEN, L"Открыть файл…\tCtrl+O");
-    AppendMenuW(file, MF_STRING, IDC_SAVEPNG, L"Сохранить PNG…\tCtrl+S");
-    AppendMenuW(file, MF_STRING, IDC_SAVECSV, L"Сохранить CSV…\tCtrl+E");
-    AppendMenuW(file, MF_STRING, IDC_SAVETXT, savetxt_menu);
+    append_menu_item_owner_draw(file, IDC_OPEN, L"Открыть файл…\tCtrl+O");
+    append_menu_item_owner_draw(file, IDC_SAVEPNG, L"Сохранить PNG…\tCtrl+S");
+    append_menu_item_owner_draw(file, IDC_SAVECSV, L"Сохранить CSV…\tCtrl+E");
+    append_menu_item_owner_draw(file, IDC_SAVETXT, savetxt_menu);
     AppendMenuW(file, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(file, MF_STRING, IDM_UNDO, L"Отменить\tCtrl+Z");
-    AppendMenuW(file, MF_STRING, IDM_REDO, L"Повторить\tCtrl+Shift+Z");
+    append_menu_item_owner_draw(file, IDM_UNDO, L"Отменить\tCtrl+Z");
+    append_menu_item_owner_draw(file, IDM_REDO, L"Повторить\tCtrl+Shift+Z");
     AppendMenuW(file, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(file, MF_STRING, IDM_EXIT, L"Выход\tAlt+F4");
-    AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(file), L"Файл");
+    append_menu_item_owner_draw(file, IDM_EXIT, L"Выход\tAlt+F4");
+    append_menu_popup_owner_draw(bar, file, L"Файл");
 
     HMENU view = CreatePopupMenu();
-    AppendMenuW(view, MF_STRING, IDC_MODE, L"Время / Гц\tM");
+    append_menu_item_owner_draw(view, IDC_MODE, L"Время / Гц\tM");
     AppendMenuW(view, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(view, MF_STRING, IDC_ZOOMIN, L"Увеличить\t+");
-    AppendMenuW(view, MF_STRING, IDC_ZOOMOUT, L"Уменьшить\t−");
-    AppendMenuW(view, MF_STRING, IDC_RESET, L"Сбросить вид\tHome");
-    AppendMenuW(view, MF_STRING, IDC_GOTO_START, L"В начало\tCtrl+Home");
-    AppendMenuW(view, MF_STRING, IDC_GOTO_END, L"В конец\tCtrl+End");
+    append_menu_item_owner_draw(view, IDC_ZOOMIN, L"Увеличить\t+");
+    append_menu_item_owner_draw(view, IDC_ZOOMOUT, L"Уменьшить\t−");
+    append_menu_item_owner_draw(view, IDC_RESET, L"Сбросить вид\tHome");
+    append_menu_item_owner_draw(view, IDC_GOTO_START, L"В начало\tCtrl+Home");
+    append_menu_item_owner_draw(view, IDC_GOTO_END, L"В конец\tCtrl+End");
     AppendMenuW(view, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(view, MF_STRING, IDC_AUTOY, (g_str == &kEn) ? L"Auto zoom" : L"Авто масштабирование");
-    AppendMenuW(view, MF_STRING, IDM_VISMOOTH, L"Сглаживание\tC");
-    AppendMenuW(view, MF_STRING, IDM_VPAN, L"Вертикальное панорамирование\tP");
-    AppendMenuW(view, MF_STRING, IDC_PLAY, L"Play / Pause\tПробел");
-    AppendMenuW(view, MF_STRING, IDM_THEME, L"Тёмная тема\tT");
-    AppendMenuW(view, MF_STRING, IDM_SPEED_CUSTOM, speed_menu_text());
-    AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(view), L"Вид");
+    append_menu_item_owner_draw(view, IDC_AUTOY, (g_str == &kEn) ? L"Auto zoom" : L"Авто масштабирование");
+    append_menu_item_owner_draw(view, IDM_VISMOOTH, L"Сглаживание\tC");
+    append_menu_item_owner_draw(view, IDM_VPAN, L"Вертикальное панорамирование\tP");
+    append_menu_item_owner_draw(view, IDC_PLAY, L"Play / Pause\tПробел");
+    append_menu_item_owner_draw(view, IDM_THEME, L"Тёмная тема\tT");
+    append_menu_item_owner_draw(view, IDM_SPEED_CUSTOM, speed_menu_text());
+    append_menu_popup_owner_draw(bar, view, L"Вид");
 
     HMENU meas = CreatePopupMenu();
-    AppendMenuW(meas, MF_STRING, IDC_MEASURE, L"Точки\tV");
-    AppendMenuW(meas, MF_STRING, IDC_PTSETTINGS, L"Настройки…");
+    append_menu_item_owner_draw(meas, IDC_MEASURE, L"Точки\tV");
+    append_menu_item_owner_draw(meas, IDC_PTSETTINGS, L"Настройки…");
     AppendMenuW(meas, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(meas, MF_STRING, IDM_CLEAR_POINTS, L"Очистить\tDelete");
-    AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(meas), L"Точки");
+    append_menu_item_owner_draw(meas, IDM_CLEAR_POINTS, L"Очистить\tDelete");
+    append_menu_popup_owner_draw(bar, meas, L"Точки");
 
     HMENU lines = CreatePopupMenu();
-    AppendMenuW(lines, MF_STRING, IDM_ADD_VLINE, L"Вертикальная\tL");
-    AppendMenuW(lines, MF_STRING, IDM_ADD_HLINE, L"Горизонтальная\tH");
+    append_menu_item_owner_draw(lines, IDM_ADD_VLINE, L"Вертикальная\tL");
+    append_menu_item_owner_draw(lines, IDM_ADD_HLINE, L"Горизонтальная\tH");
     AppendMenuW(lines, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(lines, MF_STRING, IDM_CLEAR_LINES, L"Очистить");
-    AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(lines), L"Линии");
+    append_menu_item_owner_draw(lines, IDM_CLEAR_LINES, L"Очистить");
+    append_menu_popup_owner_draw(bar, lines, L"Линии");
 
     HMENU markers = CreatePopupMenu();
-    AppendMenuW(markers, MF_STRING, IDM_ADD_MARKER, L"Добавить\tK");
+    append_menu_item_owner_draw(markers, IDM_ADD_MARKER, L"Добавить\tK");
     AppendMenuW(markers, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(markers, MF_STRING, IDM_CLEAR_MARKERS, L"Очистить");
-    AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(markers), L"Маркеры");
+    append_menu_item_owner_draw(markers, IDM_CLEAR_MARKERS, L"Очистить");
+    append_menu_popup_owner_draw(bar, markers, L"Маркеры");
 
     HMENU help = CreatePopupMenu();
-    AppendMenuW(help, MF_STRING, IDM_HOTKEYS, L"Горячие клавиши…\tF1");
-    AppendMenuW(help, MF_STRING, IDM_ABOUT, L"О программе…");
-    AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(help), L"Справка");
+    append_menu_item_owner_draw(help, IDM_HOTKEYS, L"Горячие клавиши…\tF1");
+    append_menu_item_owner_draw(help, IDM_ABOUT, L"О программе…");
+    append_menu_popup_owner_draw(bar, help, L"Справка");
 
     return bar;
 }
@@ -3759,6 +3980,7 @@ void rebuild_menu_bar() {
     if (!g.main) return;
     SetMenu(g.main, nullptr);
     if (g.menu) DestroyMenu(g.menu);
+    g_menu_text_storage.clear();
     g.menu = make_menu();
     SetMenu(g.main, g.menu);
     MENUINFO mi = { sizeof(mi) };
@@ -4078,13 +4300,13 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SetTextColor(hdc, g_theme->text_secondary);
             RECT credit = {
                 rc.left + 24,
-                max(rc.top + 8, rc.bottom - 64),
+                max(rc.top + 8, rc.bottom - 54),
                 rc.right - 24,
                 rc.bottom - 14
             };
             DrawTextW(
                 hdc,
-                L"Приложение разработал\r\nАлександр Мулеев\r\nal.muleev@gmail.com",
+                L"Приложение разработал Алекссандр Мулеев\r\nal.meleev@gmail.com",
                 -1,
                 &credit,
                 DT_CENTER | DT_VCENTER | DT_WORDBREAK | DT_NOPREFIX);
@@ -4146,7 +4368,10 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             } else {
                 SetTextColor(dc, g_theme->text_primary);
             }
-            return reinterpret_cast<LRESULT>(g_welcome_brush);
+            if (ctl_id == IDW_TITLE || ctl_id == IDW_SUBTITLE || ctl_id == IDW_INTRO || ctl_id == IDW_FEATURES) {
+                return reinterpret_cast<LRESULT>(g_welcome_hero_brush ? g_welcome_hero_brush : g_welcome_brush);
+            }
+            return reinterpret_cast<LRESULT>(g_welcome_action_brush ? g_welcome_action_brush : g_welcome_brush);
         }
         case WM_DESTROY:
             g.welcome_wnd = nullptr;
@@ -4325,11 +4550,25 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SetTextColor(dc, g_theme->text_primary);
             return reinterpret_cast<LRESULT>(g_panel_brush);
         }
+        case WM_CTLCOLORLISTBOX: {
+            HDC dc = reinterpret_cast<HDC>(wp);
+            SetBkColor(dc, g_theme->bg_panel);
+            SetTextColor(dc, g_theme->text_primary);
+            return reinterpret_cast<LRESULT>(g_panel_brush);
+        }
         case WM_CTLCOLOREDIT: {
             HDC dc = reinterpret_cast<HDC>(wp);
             SetBkColor(dc, g_theme->bg_panel);
             SetTextColor(dc, g_theme->text_primary);
             return reinterpret_cast<LRESULT>(g_panel_brush);
+        }
+        case WM_MEASUREITEM: {
+            MEASUREITEMSTRUCT* mis = reinterpret_cast<MEASUREITEMSTRUCT*>(lp);
+            if (mis && mis->CtlType == ODT_MENU) {
+                measure_owner_draw_menu(mis);
+                return TRUE;
+            }
+            break;
         }
         case WM_PAINT: {
             PAINTSTRUCT ps;
@@ -4340,6 +4579,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case WM_DRAWITEM: {
             DRAWITEMSTRUCT* dis = reinterpret_cast<DRAWITEMSTRUCT*>(lp);
+            if (dis && dis->CtlType == ODT_MENU) {
+                draw_owner_draw_menu(dis);
+                return TRUE;
+            }
             HWND btn = dis->hwndItem;
             if (!btn) break;
             HDC dc = dis->hDC;
@@ -4490,8 +4733,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         SetMenuInfo(g.menu, &mi);
                     }
                     sync_menu();
-                    if (g.welcome_wnd) InvalidateRect(g.welcome_wnd, nullptr, TRUE);
-                    InvalidateRect(hwnd, nullptr, TRUE);
+                    if (g.settings_wnd) refresh_settings_controls();
+                    refresh_theme_windows();
                     return 0;
                 case IDM_ADD_VLINE:
                     if (!has_data()) { MessageBoxW(hwnd, g_str->msg_openfirst, g_str->msg_nodata, MB_ICONINFORMATION); return 0; }
