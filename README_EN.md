@@ -17,7 +17,7 @@ The project shares one parser + FFT + analysis core across both front ends, so G
 
 | Item | Value |
 |------|-------|
-| Version | `v0.5.1` |
+| Version | `v0.8.0` |
 | Language | `C++17` |
 | GUI stack | Win32 API + GDI / GDI+ |
 | Build | `MSYS2/MinGW g++` |
@@ -63,7 +63,9 @@ The GUI is a native Win32 application with no Qt and no extra runtime dependenci
 - Measurement mode with on-chart read-outs.
 - Vertical / horizontal guide lines and labelled markers.
 - Drag & drop file opening.
-- Channel rename dialog.
+- Inline channel rename in the channel list.
+- Unified settings window for language, hotkeys, markers, and point display.
+- Signal transform controls with global and per-channel multiplier / offset.
 - Dark theme and live RU/EN language switching.
 - PNG export and CSV export.
 
@@ -223,6 +225,14 @@ g++ -std=c++17 -O2 -municode -static -mwindows -o lvm_viewer_gui.exe \
 </details>
 
 ## Changelog
+
+### v0.8.0
+
+- Rebuilt the welcome screen into a clearer two-panel start page with direct RU/EN language selection.
+- Added a unified settings window for language, hotkeys, markers, and measurement read-outs.
+- Moved channel renaming into the channel list for direct in-place editing.
+- Added signal value transforms with global and per-channel multiplier / offset controls.
+- Fixed UTF-8 handling in the Windows GUI build so Russian interface text renders correctly.
 
 ### v0.5.1
 

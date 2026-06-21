@@ -15,7 +15,7 @@ The parser is a faithful C++ port of the Python LVM Signal Viewer, and the FFT m
 
 | Item | Value |
 |------|-------|
-| Current version | `v0.5.1` |
+| Current version | `v0.8.0` |
 | Language | `C++17` |
 | GUI | Win32 API + GDI / GDI+ |
 | CLI | Standalone executable |
@@ -55,12 +55,13 @@ make
 
 ## Latest Update
 
-`v0.5.1` focuses on correctness and reliability:
+`v0.8.0` refreshes the viewer around usability and workflow:
 
-- strict monotonic time rebuild for equal neighbouring timestamps;
-- correct FFT scaling on DC / Nyquist edge bins;
-- safer handling of small `--fft-samples` values;
-- graceful CLI errors for invalid numeric arguments.
+- redesigned welcome screen with direct language selection;
+- unified settings window for language, hotkeys, markers, and point display;
+- inline channel renaming directly in the channel list;
+- signal transform controls with global and per-channel multiplier / offset;
+- UTF-8 build fix for Russian UI text in the Windows binary.
 
 <details>
 <summary>Repository structure</summary>

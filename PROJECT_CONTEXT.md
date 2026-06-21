@@ -1,6 +1,6 @@
 # LVM Graph Viewer — Project Context for AI Assistants
 
-> **Version:** v0.4.3 (latest)  
+> **Version:** v0.8.0 (latest)  
 > **Language:** C++17 (Win32 API)  
 > **Build system:** MSYS2/MinGW g++ (UCRT64)  
 > **Repository:** `https://github.com/almuleev/LVM-graph-viewer.git`  
@@ -422,8 +422,9 @@ Mouse:
 
 ---
 
-## 11. Current State (as of v0.4.3)
+## 11. Current State (as of v0.8.0)
 
-- **Fixed:** String table alignment bug from v0.4.2.
-- **Stable:** All features from v0.4.2 work correctly: zoom limit 1.5×dt, crosshair cursor lines, full i18n menu, interactive legend, dark theme, active button pressed look, measurement labels inside boxes, minor grid, welcome screen, undo/redo.
-- **No pending bugs.**
+- **Stable UI foundation:** redesigned welcome screen, live RU/EN switch, unified settings window, refreshed button states.
+- **Measurement workflow expanded:** inline channel renaming, marker snapping, configurable read-outs, marker colour settings, undo/redo.
+- **Signal preprocessing available:** global and per-channel multiplier / offset are applied in charts, snapping, and exported visible time-domain data.
+- **Build fix included:** GUI sources and Windows build flags now preserve UTF-8 Russian strings correctly.

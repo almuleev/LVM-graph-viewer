@@ -16,7 +16,7 @@ if (-not $version) { $version = "v0.0.0" }
 $outName = "LVM-graph-viewer-$version-win-x64.exe"
 
 $flags = @(
-    "-std=c++17", "-O2", "-municode", "-static", "-mwindows",
+    "-std=c++17", "-O2", "-finput-charset=UTF-8", "-municode", "-static", "-mwindows",
     "-o", $outName,
     "gui_main.cpp", "lvm_parser.cpp", "fft.cpp", "analysis.cpp",
     "-lcomdlg32", "-lgdi32", "-luser32", "-lgdiplus", "-lcomctl32"

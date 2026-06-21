@@ -1,6 +1,6 @@
 # Build the LVM Reader CLI with g++ (MSYS2/MinGW or any C++17 compiler).
 CXX      ?= g++
-CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra
+CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -finput-charset=UTF-8
 # Static linking keeps the binary self-contained (no libstdc++/libgcc DLLs).
 LDFLAGS  ?= -static
 TARGET   := lvm_reader
