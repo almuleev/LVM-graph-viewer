@@ -17,7 +17,7 @@ The project shares one parser + FFT + analysis core across both front ends, so G
 
 | Item | Value |
 |------|-------|
-| Version | `v0.8.0` |
+| Version | `v0.8.1` |
 | Language | `C++17` |
 | GUI stack | Win32 API + GDI / GDI+ |
 | Build | `MSYS2/MinGW g++` |
@@ -225,6 +225,14 @@ g++ -std=c++17 -O2 -municode -static -mwindows -o lvm_viewer_gui.exe \
 </details>
 
 ## Changelog
+
+### v0.8.1
+
+- Fixed the remaining mojibake in Russian menu labels and settings text.
+- Refined active button rendering and unified the `Auto zoom` naming across the UI.
+- Clamped edge axis labels so they stay inside the chart area instead of overlapping nearby UI.
+- Reworked playback speed selection into direct custom numeric input.
+- Cleaned up the welcome screen footer and removed decorative graph clutter.
 
 ### v0.8.0
 

@@ -107,6 +107,7 @@ enum {
     IDM_SPEED_2,
     IDM_SPEED_5,
     IDM_SPEED_10,
+    IDM_SPEED_CUSTOM,
 
     IDM_UNDO = 1400,
     IDM_REDO,
@@ -225,12 +226,26 @@ const Theme* g_theme = &kLightTheme;
 HBRUSH g_panel_brush = nullptr;
 HBRUSH g_welcome_brush = nullptr;
 
+struct SpeedPromptState {
+    HWND wnd = nullptr;
+    HWND edit = nullptr;
+    bool done = false;
+    bool accepted = false;
+    double value = 1.0;
+};
+
+SpeedPromptState g_speed_prompt;
+
 void update_theme_brushes() {
     if (g_panel_brush) DeleteObject(g_panel_brush);
     g_panel_brush = CreateSolidBrush(g_theme->bg_panel);
     if (g_welcome_brush) DeleteObject(g_welcome_brush);
     g_welcome_brush = CreateSolidBrush(g_theme->bg_main);
 }
+
+const int IDC_SPEED_PROMPT_EDIT = 6200;
+const int IDC_SPEED_PROMPT_OK = 6201;
+const int IDC_SPEED_PROMPT_CANCEL = 6202;
 
 // ---- string table --------------------------------------------------------
 struct Strings {
@@ -290,7 +305,7 @@ static const Strings kRu = {
     L"LVM Viewer",
     L"Файл", L"Вид", L"Точки", L"Линии", L"Маркеры", L"Справка",
     L"Открыть файл…\tCtrl+O", L"Сохранить PNG…\tCtrl+S", L"Сохранить CSV…\tCtrl+E", L"Отменить\tCtrl+Z", L"Повторить\tCtrl+Shift+Z", L"Выход\tAlt+F4",
-    L"Время / Гц\tM", L"Увеличить\t+", L"Уменьшить\t−", L"Сбросить вид\tHome", L"Auto Y", L"Сглаживание\tC", L"Вертикальное панорамирование\tP", L"Play / Pause\tПробел", L"Тёмная тема\tT", L"Скорость",
+    L"Время / Гц\tM", L"Увеличить\t+", L"Уменьшить\t−", L"Сбросить вид\tHome", L"Авто масштабирование", L"Сглаживание\tC", L"Вертикальное панорамирование\tP", L"Play / Pause\tПробел", L"Тёмная тема\tT", L"Скорость",
     L"Точки\tV", L"Настройки…", L"Очистить\tDelete",
     L"Вертикальная\tL", L"Горизонтальная\tH", L"Очистить",
     L"Добавить\tK", L"Очистить",
@@ -310,7 +325,7 @@ static const Strings kRu = {
     L"Открыть файл", L"Настройки точек…", L"Горячие клавиши", L"Начать работу",
     L"Файлы\n  O / Ctrl+O\t— Открыть\n  S / Ctrl+S\t— PNG\n  E / Ctrl+E\t— CSV\n  Ctrl+Z\t— Отменить\n  Ctrl+Shift+Z\t— Повторить\n\nВид\n  M\t— Время/Гц\n  C\t— Сглаживание\n  + / ↑\t— Увеличить\n  − / ↓\t— Уменьшить\n  ← / →\t— Сдвиг влево/вправо\n  Home\t— Сброс\n  Ctrl+Home\t— В начало\n  Ctrl+End\t— В конец\n  Пробел\t— Play / Pause\n\nЛинии и маркеры\n  L\t— Вертикальная линия\n  H\t— Горизонтальная линия\n  K\t— Маркер\n  Esc\t— Отменить добавление\n\nТочки\n  V\t— Режим точек вкл/выкл\n  Delete\t— Очистить точки\n\nМышь\n  Колесо\t— Масштаб под курсором\n  Shift+колесо\t— Прокрутка влево/вправо\n  Ctrl+колесо\t— Масштаб по высоте (Y)\n  Alt+колесо\t— Сдвиг вверх/вниз (Y)\n  ЛКМ + тяга\t— Панорамирование (вкл/выкл вертикальное через Вид)\n  ЛКМ\t— Поставить точку / линию / маркер (в режиме)\n  ПКМ\t— Очистить точки\n\n  F1\t— Эта справка",
     L"LVM Viewer — просмотрщик сигналов LabVIEW (.lvm / .txt)\n\nНативное приложение Win32 + GDI/GDI+, без внешних\nзависимостей и без Qt. Время и спектр (БПФ), измерения\nс примагничиванием, направляющие линии, визуальное\nсглаживание, экспорт PNG/CSV.\n\nСборка: build_gui.ps1 (MinGW g++) или make gui.",
-    L"Открыть файл…", L"Сохранить PNG", L"Сохранить CSV", L"Переключить Время / Гц", L"Воспроизведение", L"Пауза", L"Режим измерения точек", L"Сбросить вид", L"Авто масштаб по Y", L"Настройки точек",
+    L"Открыть файл…", L"Сохранить PNG", L"Сохранить CSV", L"Переключить Время / Гц", L"Воспроизведение", L"Пауза", L"Режим измерения точек", L"Сбросить вид", L"Авто масштабирование", L"Настройки точек",
     L"Русский", L"English", L"Язык",
     L"Загрузка файла...\nПожалуйста, подождите",
     L"Откройте файл .lvm или .txt (кнопка «Открыть файл» / клавиша O)",
@@ -342,7 +357,7 @@ static const Strings kEn = {
     L"LVM Viewer",
     L"File", L"View", L"Points", L"Lines", L"Markers", L"Help",
     L"Open file…\tCtrl+O", L"Save PNG…\tCtrl+S", L"Save CSV…\tCtrl+E", L"Undo\tCtrl+Z", L"Redo\tCtrl+Shift+Z", L"Exit\tAlt+F4",
-    L"Time / Hz\tM", L"Zoom in\t+", L"Zoom out\t−", L"Reset view\tHome", L"Auto Y", L"Smoothing\tC", L"Vertical pan\tP", L"Play / Pause\tSpace", L"Dark theme\tT", L"Speed",
+    L"Time / Hz\tM", L"Zoom in\t+", L"Zoom out\t−", L"Reset view\tHome", L"Auto zoom", L"Smoothing\tC", L"Vertical pan\tP", L"Play / Pause\tSpace", L"Dark theme\tT", L"Speed",
     L"Points\tV", L"Settings…", L"Clear\tDelete",
     L"Vertical\tL", L"Horizontal\tH", L"Clear",
     L"Add\tK", L"Clear",
@@ -362,7 +377,7 @@ static const Strings kEn = {
     L"Open file", L"Point settings…", L"Keyboard shortcuts", L"Start working",
     L"Files\n  O / Ctrl+O\t— Open\n  S / Ctrl+S\t— PNG\n  E / Ctrl+E\t— CSV\n  Ctrl+Z\t— Undo\n  Ctrl+Shift+Z\t— Redo\n\nView\n  M\t— Time / Hz\n  C\t— Smoothing\n  + / ↑\t— Zoom in\n  − / ↓\t— Zoom out\n  ← / →\t— Pan left / right\n  Home\t— Reset view\n  Ctrl+Home\t— Go to start\n  Ctrl+End\t— Go to end\n  Space\t— Play / Pause\n\nLines and markers\n  L\t— Vertical line\n  H\t— Horizontal line\n  K\t— Marker\n  Esc\t— Cancel adding\n\nPoints\n  V\t— Measure mode on/off\n  Delete\t— Clear points\n\nMouse\n  Wheel\t— Zoom under cursor\n  Shift+wheel\t— Pan left / right\n  Ctrl+wheel\t— Zoom Y\n  Alt+wheel\t— Pan up/down (Y)\n  Left-drag\t— Pan (toggle vertical via View)\n  Left-click\t— Drop point / line / marker (in mode)\n  Right-click\t— Clear points\n\n  F1\t— This help",
     L"LVM Viewer — LabVIEW signal viewer (.lvm / .txt)\n\nNative Win32 + GDI/GDI+ application, no external\ndependencies, no Qt. Time and spectrum (FFT), measurements\nwith snapping, guide lines, visual smoothing, PNG/CSV export.\n\nBuild: build_gui.ps1 (MinGW g++) or make gui.",
-    L"Open file…", L"Save PNG", L"Save CSV", L"Toggle Time / Hz", L"Playback", L"Pause", L"Measurement point mode", L"Reset view", L"Auto Y scale", L"Point settings",
+    L"Open file…", L"Save PNG", L"Save CSV", L"Toggle Time / Hz", L"Playback", L"Pause", L"Measurement point mode", L"Reset view", L"Auto zoom", L"Point settings",
     L"Русский", L"English", L"Language",
     L"Loading file...\nPlease wait",
     L"Open a .lvm or .txt file (click «Open file» / press O)",
@@ -1097,6 +1112,177 @@ void ensure_channel_transform_vectors();
 double transform_channel_value(std::size_t ci, double raw);
 HMENU make_menu();
 std::wstring hotkey_text_for_command(int command);
+std::wstring format_edit_number(double value);
+bool parse_wide_double_text(const wchar_t* text, double& out);
+
+const wchar_t* speed_menu_text() {
+    return (g_str == &kEn) ? L"Speed" : L"Скорость";
+}
+
+const wchar_t* speed_prompt_title_text() {
+    return (g_str == &kEn) ? L"Playback speed" : L"Скорость воспроизведения";
+}
+
+const wchar_t* speed_prompt_label_text() {
+    return (g_str == &kEn)
+        ? L"Enter a playback speed multiplier:"
+        : L"Введите множитель скорости воспроизведения:";
+}
+
+const wchar_t* speed_prompt_apply_text() {
+    return (g_str == &kEn) ? L"Apply" : L"Применить";
+}
+
+const wchar_t* speed_prompt_cancel_text() {
+    return (g_str == &kEn) ? L"Cancel" : L"Отмена";
+}
+
+const wchar_t* speed_prompt_invalid_text() {
+    return (g_str == &kEn)
+        ? L"Enter a positive number, for example 0.5, 1, or 2.75."
+        : L"Введите положительное число, например 0.5, 1 или 2.75.";
+}
+
+void set_play_speed(double speed) {
+    if (!(speed > 0.0) || !std::isfinite(speed)) return;
+    if (g.playing) {
+        LARGE_INTEGER now{}, freq{};
+        QueryPerformanceCounter(&now);
+        QueryPerformanceFrequency(&freq);
+        const double elapsed = static_cast<double>(now.QuadPart - g.play_anchor_qpc.QuadPart) /
+                               static_cast<double>(freq.QuadPart);
+        g.playhead = g.play_anchor_data + elapsed * g.play_speed;
+        if (has_data()) {
+            if (g.playhead < g.data_t0) g.playhead = g.data_t0;
+            if (g.playhead > g.data_t1) g.playhead = g.data_t1;
+        }
+        g.play_anchor_data = g.playhead;
+        g.play_anchor_qpc = now;
+    }
+    g.play_speed = speed;
+    set_status();
+}
+
+LRESULT CALLBACK SpeedPromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+        case WM_CREATE: {
+            HFONT font = g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+            CreateWindowExW(0, L"STATIC", speed_prompt_label_text(),
+                            WS_CHILD | WS_VISIBLE | SS_LEFT,
+                            16, 16, 320, 20, hwnd, nullptr,
+                            reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
+            g_speed_prompt.edit = CreateWindowExW(
+                WS_EX_CLIENTEDGE, L"EDIT", format_edit_number(g_speed_prompt.value).c_str(),
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+                16, 44, 320, 24, hwnd,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SPEED_PROMPT_EDIT)),
+                reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
+            HWND ok = CreateWindowExW(
+                0, L"BUTTON", speed_prompt_apply_text(),
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+                86, 82, 116, 28, hwnd,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SPEED_PROMPT_OK)),
+                reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
+            HWND cancel = CreateWindowExW(
+                0, L"BUTTON", speed_prompt_cancel_text(),
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                214, 82, 122, 28, hwnd,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SPEED_PROMPT_CANCEL)),
+                reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
+            if (g_speed_prompt.edit) SendMessageW(g_speed_prompt.edit, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            if (ok) SendMessageW(ok, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            if (cancel) SendMessageW(cancel, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            HWND label = GetWindow(hwnd, GW_CHILD);
+            if (label) SendMessageW(label, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            return 0;
+        }
+        case WM_COMMAND:
+            switch (LOWORD(wp)) {
+                case IDC_SPEED_PROMPT_OK: {
+                    double value = 0.0;
+                    wchar_t buf[128]{};
+                    if (g_speed_prompt.edit) GetWindowTextW(g_speed_prompt.edit, buf, 128);
+                    if (!parse_wide_double_text(buf, value) || !(value > 0.0) || !std::isfinite(value)) {
+                        MessageBoxW(hwnd, speed_prompt_invalid_text(), speed_prompt_title_text(), MB_OK | MB_ICONWARNING);
+                        if (g_speed_prompt.edit) SetFocus(g_speed_prompt.edit);
+                        return 0;
+                    }
+                    g_speed_prompt.value = value;
+                    g_speed_prompt.accepted = true;
+                    DestroyWindow(hwnd);
+                    return 0;
+                }
+                case IDC_SPEED_PROMPT_CANCEL:
+                    DestroyWindow(hwnd);
+                    return 0;
+            }
+            break;
+        case WM_CLOSE:
+            DestroyWindow(hwnd);
+            return 0;
+        case WM_DESTROY:
+            g_speed_prompt.done = true;
+            g_speed_prompt.wnd = nullptr;
+            g_speed_prompt.edit = nullptr;
+            return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+bool prompt_custom_play_speed(double& out_speed) {
+    static ATOM atom = 0;
+    if (!atom) {
+        WNDCLASSEXW wc = { sizeof(wc) };
+        wc.lpfnWndProc = SpeedPromptProc;
+        wc.hInstance = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(g.main, GWLP_HINSTANCE));
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+        wc.lpszClassName = L"LvmSpeedPrompt";
+        atom = RegisterClassExW(&wc);
+    }
+
+    g_speed_prompt.done = false;
+    g_speed_prompt.accepted = false;
+    g_speed_prompt.value = g.play_speed;
+    g_speed_prompt.wnd = CreateWindowExW(
+        WS_EX_DLGMODALFRAME | WS_EX_TOOLWINDOW,
+        L"LvmSpeedPrompt",
+        speed_prompt_title_text(),
+        WS_CAPTION | WS_SYSMENU | WS_POPUP | WS_VISIBLE,
+        CW_USEDEFAULT, CW_USEDEFAULT, 368, 150,
+        g.main, nullptr,
+        reinterpret_cast<HINSTANCE>(GetWindowLongPtr(g.main, GWLP_HINSTANCE)),
+        nullptr);
+    if (!g_speed_prompt.wnd) return false;
+
+    RECT mr{}, wr{};
+    GetWindowRect(g.main, &mr);
+    GetWindowRect(g_speed_prompt.wnd, &wr);
+    SetWindowPos(
+        g_speed_prompt.wnd, HWND_TOP,
+        mr.left + ((mr.right - mr.left) - (wr.right - wr.left)) / 2,
+        mr.top + ((mr.bottom - mr.top) - (wr.bottom - wr.top)) / 2,
+        0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+    EnableWindow(g.main, FALSE);
+    if (g_speed_prompt.edit) {
+        SetFocus(g_speed_prompt.edit);
+        SendMessageW(g_speed_prompt.edit, EM_SETSEL, 0, -1);
+    }
+
+    MSG msg;
+    while (!g_speed_prompt.done && GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        if (!IsDialogMessageW(g_speed_prompt.wnd, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+
+    EnableWindow(g.main, TRUE);
+    SetForegroundWindow(g.main);
+    if (!g_speed_prompt.accepted) return false;
+    out_speed = g_speed_prompt.value;
+    return true;
+}
 
 void invalidate_plot() {
     RECT pr = plot_rect();
@@ -1455,16 +1641,28 @@ void draw_axes(HDC dc, const RECT& p, double x0, double x1, double y0, double y1
         MoveToEx(dc, px, p.top, nullptr);
         LineTo(dc, px, p.bottom);
         swprintf(buf, 64, L"%.4g", x0 + fx * (x1 - x0));
-        SetTextAlign(dc, TA_CENTER | TA_TOP);
-        TextOutW(dc, px, p.bottom + 4, buf, lstrlenW(buf));
+        SIZE xsz{};
+        GetTextExtentPoint32W(dc, buf, lstrlenW(buf), &xsz);
+        int tx = px - xsz.cx / 2;
+        if (tx < p.left) tx = p.left;
+        const int max_tx = p.right - xsz.cx;
+        if (tx > max_tx) tx = max_tx;
+        SetTextAlign(dc, TA_LEFT | TA_TOP);
+        TextOutW(dc, tx, p.bottom + 4, buf, lstrlenW(buf));
 
         const double fy = static_cast<double>(i) / ticks;
         const int py = p.bottom - static_cast<int>(fy * (p.bottom - p.top));
         MoveToEx(dc, p.left, py, nullptr);
         LineTo(dc, p.right, py);
         swprintf(buf, 64, L"%.4g", y0 + fy * (y1 - y0));
-        SetTextAlign(dc, TA_RIGHT | TA_BASELINE);
-        TextOutW(dc, p.left - 8, py, buf, lstrlenW(buf));
+        SIZE ysz{};
+        GetTextExtentPoint32W(dc, buf, lstrlenW(buf), &ysz);
+        int ty = py - ysz.cy / 2;
+        if (ty < p.top + 2) ty = p.top + 2;
+        const int max_ty = p.bottom - ysz.cy - 2;
+        if (ty > max_ty) ty = max_ty;
+        SetTextAlign(dc, TA_RIGHT | TA_TOP);
+        TextOutW(dc, p.left - 8, ty, buf, lstrlenW(buf));
     }
 
     HPEN minor = CreatePen(PS_SOLID, 1, g_theme->minor_grid);
@@ -2693,7 +2891,7 @@ std::wstring command_name(int command) {
         case IDM_ADD_MARKER: return en ? L"Marker" : L"Маркер";
         case IDM_ADD_VLINE: return en ? L"Vertical line" : L"Вертикальная линия";
         case IDM_ADD_HLINE: return en ? L"Horizontal line" : L"Горизонтальная линия";
-        case IDC_AUTOY: return L"Auto Y";
+        case IDC_AUTOY: return en ? L"Auto zoom" : L"Авто масштабирование";
         case IDM_VISMOOTH: return en ? L"Smoothing" : L"Сглаживание";
         case IDM_VPAN: return en ? L"Vertical pan" : L"Вертикальное панорамирование";
         case IDM_THEME: return en ? L"Dark theme" : L"Тёмная тема";
@@ -2750,19 +2948,11 @@ const wchar_t* welcome_actions_title_text() {
     return (g_str == &kEn) ? L"Start Here" : L"Быстрый старт";
 }
 
-std::wstring welcome_actions_hint_text() {
-    return (g_str == &kEn)
-        ? L"Tip: hold Shift and drag in Time mode to send the selected interval to Hz / FFT."
-        : L"Подсказка: в режиме Time удерживайте Shift и тяните мышью, чтобы передать выбранный участок в Hz / FFT.";
-}
-
 struct WelcomeLayout {
     RECT bounds{};
     RECT hero{};
     RECT action{};
-    RECT preview{};
     bool stacked = false;
-    bool show_preview = false;
 };
 
 int rect_width(const RECT& r) {
@@ -2801,17 +2991,6 @@ WelcomeLayout compute_welcome_layout(HWND hwnd) {
         layout.action = { layout.hero.right + gap, y0, x0 + content_w, y0 + content_h };
     }
 
-    layout.show_preview = rect_height(layout.hero) >= (layout.stacked ? 320 : 360);
-    if (layout.show_preview) {
-        const int inset = layout.stacked ? 20 : 24;
-        const int preview_h = layout.stacked ? 92 : 120;
-        layout.preview = {
-            layout.hero.left + inset,
-            layout.hero.bottom - inset - preview_h,
-            layout.hero.right - inset,
-            layout.hero.bottom - inset
-        };
-    }
     return layout;
 }
 
@@ -2837,7 +3016,7 @@ void layout_welcome_controls(HWND hwnd) {
     place(IDW_INTRO, hx, hy, hw, intro_h);
     hy += intro_h + 18;
 
-    const int feature_bottom = layout.show_preview ? (layout.preview.top - 18) : (layout.hero.bottom - hero_pad);
+    const int feature_bottom = layout.hero.bottom - hero_pad;
     place(IDW_FEATURES, hx, hy, hw, max(72, feature_bottom - hy));
 
     const int action_pad = layout.stacked ? 20 : 24;
@@ -2847,8 +3026,6 @@ void layout_welcome_controls(HWND hwnd) {
     const int lang_gap = 10;
     const int button_h = 40;
     const int button_gap = layout.stacked ? 10 : 12;
-    const int hint_h = layout.stacked ? 44 : 52;
-
     place(IDW_LANG_LABEL, ax, ay, aw, 20);
     ay += 24;
     const int lang_w = max(80, (aw - lang_gap) / 2);
@@ -2864,12 +3041,6 @@ void layout_welcome_controls(HWND hwnd) {
     place(IDM_HOTKEYS, ax, ay, aw, button_h);
     ay += button_h + button_gap;
     place(IDW_START, ax, ay, aw, button_h);
-
-    int hint_y = max(ay + 16, static_cast<int>(layout.action.bottom - action_pad - hint_h));
-    if (hint_y + hint_h > layout.action.bottom - action_pad) {
-        hint_y = ay + 16;
-    }
-    place(IDW_ACTIONS_HINT, ax, hint_y, aw, hint_h);
 }
 
 void append_hotkey_line(std::wstring& out, int command) {
@@ -3123,7 +3294,7 @@ HMENU make_menu() {
         std::wstring reset_text = menu_text(en ? L"Reset view" : L"Сбросить вид", IDC_RESET);
         std::wstring start_text = menu_text(en ? L"Go to start" : L"В начало", IDC_GOTO_START);
         std::wstring end_text = menu_text(en ? L"Go to end" : L"В конец", IDC_GOTO_END);
-        std::wstring autoy_text = menu_text(L"Auto Y", IDC_AUTOY);
+        std::wstring autoy_text = menu_text(en ? L"Auto zoom" : L"Авто масштабирование", IDC_AUTOY);
         std::wstring smooth_text = menu_text(en ? L"Smoothing" : L"Сглаживание", IDM_VISMOOTH);
         std::wstring vpan_text = menu_text(en ? L"Vertical pan" : L"Вертикальное панорамирование", IDM_VPAN);
         std::wstring play_text = menu_text(L"Play / Pause", IDC_PLAY);
@@ -3142,17 +3313,7 @@ HMENU make_menu() {
         AppendMenuW(view, MF_STRING, IDM_VPAN, vpan_text.c_str());
         AppendMenuW(view, MF_STRING, IDC_PLAY, play_text.c_str());
         AppendMenuW(view, MF_STRING, IDM_THEME, theme_text.c_str());
-        HMENU speed = CreatePopupMenu();
-        AppendMenuW(speed, MF_STRING, IDM_SPEED_00001, L"0.0001x");
-        AppendMenuW(speed, MF_STRING, IDM_SPEED_0001, L"0.001x");
-        AppendMenuW(speed, MF_STRING, IDM_SPEED_001, L"0.01x");
-        AppendMenuW(speed, MF_STRING, IDM_SPEED_01, L"0.1x");
-        AppendMenuW(speed, MF_STRING, IDM_SPEED_05, L"0.5x");
-        AppendMenuW(speed, MF_STRING, IDM_SPEED_1, L"1x");
-        AppendMenuW(speed, MF_STRING, IDM_SPEED_2, L"2x");
-        AppendMenuW(speed, MF_STRING, IDM_SPEED_5, L"5x");
-        AppendMenuW(speed, MF_STRING, IDM_SPEED_10, L"10x");
-        AppendMenuW(view, MF_POPUP, reinterpret_cast<UINT_PTR>(speed), en ? L"Speed" : L"Скорость");
+        AppendMenuW(view, MF_STRING, IDM_SPEED_CUSTOM, speed_menu_text());
         AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(view), en ? L"View" : L"Вид");
 
         HMENU tools = CreatePopupMenu();
@@ -3168,7 +3329,7 @@ HMENU make_menu() {
         AppendMenuW(tools, MF_STRING, IDM_CLEAR_POINTS, en ? L"Clear points" : L"Очистить точки");
         AppendMenuW(tools, MF_STRING, IDM_CLEAR_MARKERS, en ? L"Clear markers" : L"Очистить маркеры");
         AppendMenuW(tools, MF_STRING, IDM_CLEAR_LINES, en ? L"Clear lines" : L"Очистить линии");
-        AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(tools), en ? L"Tools" : L"РРЅСЃС‚СЂСѓРјРµРЅС‚С‹");
+        AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(tools), en ? L"Tools" : L"Инструменты");
 
         HMENU settings = CreatePopupMenu();
         HMENU lang = CreatePopupMenu();
@@ -3220,7 +3381,7 @@ HMENU make_menu() {
         std::wstring reset_text = menu_text(en ? L"Reset view" : L"Сбросить вид", IDC_RESET);
         std::wstring start_text = menu_text(en ? L"Go to start" : L"В начало", IDC_GOTO_START);
         std::wstring end_text = menu_text(en ? L"Go to end" : L"В конец", IDC_GOTO_END);
-        std::wstring autoy_text = menu_text(L"Auto Y", IDC_AUTOY);
+        std::wstring autoy_text = menu_text(en ? L"Auto zoom" : L"Авто масштабирование", IDC_AUTOY);
         std::wstring smooth_text = menu_text(en ? L"Smoothing" : L"Сглаживание", IDM_VISMOOTH);
         std::wstring vpan_text = menu_text(en ? L"Vertical pan" : L"Вертикальное панорамирование", IDM_VPAN);
         std::wstring play_text = menu_text(L"Play / Pause", IDC_PLAY);
@@ -3239,17 +3400,7 @@ HMENU make_menu() {
         AppendMenuW(view, MF_STRING, IDM_VPAN, vpan_text.c_str());
         AppendMenuW(view, MF_STRING, IDC_PLAY, play_text.c_str());
         AppendMenuW(view, MF_STRING, IDM_THEME, theme_text.c_str());
-        HMENU speed = CreatePopupMenu();
-        AppendMenuW(speed, MF_STRING, IDM_SPEED_00001, L"0.0001x");
-        AppendMenuW(speed, MF_STRING, IDM_SPEED_0001, L"0.001x");
-        AppendMenuW(speed, MF_STRING, IDM_SPEED_001, L"0.01x");
-        AppendMenuW(speed, MF_STRING, IDM_SPEED_01, L"0.1x");
-        AppendMenuW(speed, MF_STRING, IDM_SPEED_05, L"0.5x");
-        AppendMenuW(speed, MF_STRING, IDM_SPEED_1, L"1x");
-        AppendMenuW(speed, MF_STRING, IDM_SPEED_2, L"2x");
-        AppendMenuW(speed, MF_STRING, IDM_SPEED_5, L"5x");
-        AppendMenuW(speed, MF_STRING, IDM_SPEED_10, L"10x");
-        AppendMenuW(view, MF_POPUP, reinterpret_cast<UINT_PTR>(speed), en ? L"Speed" : L"Скорость");
+        AppendMenuW(view, MF_STRING, IDM_SPEED_CUSTOM, speed_menu_text());
         AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(view), menu_view);
 
         HMENU meas = CreatePopupMenu();
@@ -3305,22 +3456,12 @@ HMENU make_menu() {
     AppendMenuW(view, MF_STRING, IDC_GOTO_START, L"В начало\tCtrl+Home");
     AppendMenuW(view, MF_STRING, IDC_GOTO_END, L"В конец\tCtrl+End");
     AppendMenuW(view, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(view, MF_STRING, IDC_AUTOY, L"Auto Y");
+    AppendMenuW(view, MF_STRING, IDC_AUTOY, (g_str == &kEn) ? L"Auto zoom" : L"Авто масштабирование");
     AppendMenuW(view, MF_STRING, IDM_VISMOOTH, L"Сглаживание\tC");
     AppendMenuW(view, MF_STRING, IDM_VPAN, L"Вертикальное панорамирование\tP");
     AppendMenuW(view, MF_STRING, IDC_PLAY, L"Play / Pause\tПробел");
     AppendMenuW(view, MF_STRING, IDM_THEME, L"Тёмная тема\tT");
-    HMENU speed = CreatePopupMenu();
-    AppendMenuW(speed, MF_STRING, IDM_SPEED_00001, L"0.0001×");
-    AppendMenuW(speed, MF_STRING, IDM_SPEED_0001, L"0.001×");
-    AppendMenuW(speed, MF_STRING, IDM_SPEED_001, L"0.01×");
-    AppendMenuW(speed, MF_STRING, IDM_SPEED_01, L"0.1×");
-    AppendMenuW(speed, MF_STRING, IDM_SPEED_05, L"0.5×");
-    AppendMenuW(speed, MF_STRING, IDM_SPEED_1, L"1×");
-    AppendMenuW(speed, MF_STRING, IDM_SPEED_2, L"2×");
-    AppendMenuW(speed, MF_STRING, IDM_SPEED_5, L"5×");
-    AppendMenuW(speed, MF_STRING, IDM_SPEED_10, L"10×");
-    AppendMenuW(view, MF_POPUP, reinterpret_cast<UINT_PTR>(speed), L"Скорость");
+    AppendMenuW(view, MF_STRING, IDM_SPEED_CUSTOM, speed_menu_text());
     AppendMenuW(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(view), L"Вид");
 
     HMENU meas = CreatePopupMenu();
@@ -3502,7 +3643,7 @@ const wchar_t* transform_reset_all_text() {
 const wchar_t* transform_hint_text() {
     return (g_str == &kEn)
         ? L"Result = raw * global * channel + global add + channel add"
-        : L"РС‚РѕРі = РёСЃС…РѕРґРЅРѕРµ * РѕР±С‰РёР№ * РєР°РЅР°Р» + РѕР±С‰РµРµ СЃР»Р°РіР°РµРјРѕРµ + СЃР»Р°РіР°РµРјРѕРµ РєР°РЅР°Р»Р°";
+        : L"Итог = исходное * общий * канал + общее слагаемое + слагаемое канала";
 }
 
 void populate_transform_channel_list(HWND hwnd) {
@@ -3645,10 +3786,10 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             mk(L"BUTTON", g_str->lang_en, BS_AUTORADIOBUTTON, 144, 36, 110, 22, IDC_SET_LANG_EN);
 
             mk(L"BUTTON", transform_group_title_text(), BS_GROUPBOX, 12, 92, 510, 206, 0);
-            mk(L"STATIC", transform_global_mul_text(), SS_LEFT, 24, 118, 120, 20, 0);
-            mk(L"EDIT", format_edit_number(g.global_value_mul).c_str(), WS_BORDER | ES_AUTOHSCROLL, 146, 114, 96, 24, IDC_SET_GLOBAL_MUL);
-            mk(L"STATIC", transform_global_add_text(), SS_LEFT, 266, 118, 112, 20, 0);
-            mk(L"EDIT", format_edit_number(g.global_value_add).c_str(), WS_BORDER | ES_AUTOHSCROLL, 388, 114, 110, 24, IDC_SET_GLOBAL_ADD);
+            mk(L"STATIC", transform_global_mul_text(), SS_LEFT, 24, 118, 148, 20, 0);
+            mk(L"EDIT", format_edit_number(g.global_value_mul).c_str(), WS_BORDER | ES_AUTOHSCROLL, 176, 114, 70, 24, IDC_SET_GLOBAL_MUL);
+            mk(L"STATIC", transform_global_add_text(), SS_LEFT, 258, 118, 150, 20, 0);
+            mk(L"EDIT", format_edit_number(g.global_value_add).c_str(), WS_BORDER | ES_AUTOHSCROLL, 410, 114, 88, 24, IDC_SET_GLOBAL_ADD);
             mk(L"STATIC", transform_hint_text(), SS_LEFT, 24, 146, 474, 18, 0);
             mk(L"LISTBOX", L"", LBS_NOTIFY | WS_VSCROLL | WS_BORDER, 24, 172, 206, 108, IDC_SET_TRANSFORM_LIST);
             mk(L"STATIC", transform_channel_mul_text(), SS_LEFT, 252, 176, 136, 20, 0);
@@ -3855,66 +3996,6 @@ void open_settings() {
 
 void rebuild_ui();
 
-void draw_welcome_preview(HDC hdc, const RECT& r) {
-    if (rect_width(r) <= 0 || rect_height(r) <= 0) return;
-    fill_rounded_rect(hdc, r, g_theme->bg_plot, g_theme->frame, 10);
-
-    RECT selection = {
-        r.left + rect_width(r) * 54 / 100,
-        r.top + 10,
-        r.left + rect_width(r) * 76 / 100,
-        r.bottom - 10
-    };
-    HBRUSH sel_brush = CreateSolidBrush(g_theme->btn_hover);
-    FillRect(hdc, &selection, sel_brush);
-    DeleteObject(sel_brush);
-
-    HPEN sel_pen = CreatePen(PS_SOLID, 1, g_theme->accent);
-    HGDIOBJ old_pen = SelectObject(hdc, sel_pen);
-    HGDIOBJ old_brush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
-    Rectangle(hdc, selection.left, selection.top, selection.right, selection.bottom);
-
-    HPEN grid_pen = CreatePen(PS_SOLID, 1, g_theme->grid);
-    SelectObject(hdc, grid_pen);
-    const int rows = 4;
-    for (int i = 1; i < rows; ++i) {
-        const int y = r.top + i * rect_height(r) / rows;
-        MoveToEx(hdc, r.left + 12, y, nullptr);
-        LineTo(hdc, r.right - 12, y);
-    }
-
-    const int samples = 56;
-    POINT p1[samples];
-    POINT p2[samples];
-    const double mid = (r.top + r.bottom) * 0.5;
-    const double amp1 = rect_height(r) * 0.22;
-    const double amp2 = rect_height(r) * 0.14;
-    const double width = max(1, rect_width(r) - 28);
-    for (int i = 0; i < samples; ++i) {
-        const double t = static_cast<double>(i) / static_cast<double>(samples - 1);
-        const int x = r.left + 14 + static_cast<int>(t * width);
-        const double y1 = mid - std::sin(t * 6.28318 * 1.2) * amp1 - std::sin(t * 6.28318 * 3.7) * amp2 * 0.55;
-        const double y2 = mid + 8 - std::cos(t * 6.28318 * 0.9) * amp2 * 0.55 + std::sin(t * 6.28318 * 2.2) * amp2 * 0.35;
-        p1[i] = { x, static_cast<LONG>(y1) };
-        p2[i] = { x, static_cast<LONG>(y2) };
-    }
-
-    HPEN line1 = CreatePen(PS_SOLID, 2, g_theme->accent);
-    SelectObject(hdc, line1);
-    Polyline(hdc, p1, samples);
-
-    HPEN line2 = CreatePen(PS_SOLID, 2, channel_color(2));
-    SelectObject(hdc, line2);
-    Polyline(hdc, p2, samples);
-
-    SelectObject(hdc, old_brush);
-    SelectObject(hdc, old_pen);
-    DeleteObject(line2);
-    DeleteObject(line1);
-    DeleteObject(grid_pen);
-    DeleteObject(sel_pen);
-}
-
 LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE: {
@@ -3951,7 +4032,6 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             mkbtn(settings_button_text(), IDC_PTSETTINGS);
             mkbtn(g_str->welcome_btn_hotkeys, IDM_HOTKEYS);
             mkbtn(g_str->welcome_btn_start, IDW_START);
-            mkstatic(welcome_actions_hint_text().c_str(), IDW_ACTIONS_HINT, font);
             layout_welcome_controls(hwnd);
             return 0;
         }
@@ -3992,18 +4072,23 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             FillRect(hdc, &action_header, action_accent);
             DeleteObject(action_accent);
 
-            if (layout.show_preview) {
-                draw_welcome_preview(hdc, layout.preview);
-            }
-
-            if (rect_height(layout.action) >= 340) {
-                HPEN footer_pen = CreatePen(PS_SOLID, 1, g_theme->separator);
-                HGDIOBJ old_pen = SelectObject(hdc, footer_pen);
-                MoveToEx(hdc, layout.action.left + 20, layout.action.bottom - 86, nullptr);
-                LineTo(hdc, layout.action.right - 20, layout.action.bottom - 86);
-                SelectObject(hdc, old_pen);
-                DeleteObject(footer_pen);
-            }
+            HFONT old_font = reinterpret_cast<HFONT>(SelectObject(
+                hdc, g.axis_font ? g.axis_font : (g.ui_font ? g.ui_font : GetStockObject(DEFAULT_GUI_FONT))));
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, g_theme->text_secondary);
+            RECT credit = {
+                rc.left + 24,
+                max(rc.top + 8, rc.bottom - 64),
+                rc.right - 24,
+                rc.bottom - 14
+            };
+            DrawTextW(
+                hdc,
+                L"Приложение разработал\r\nАлександр Мулеев\r\nal.muleev@gmail.com",
+                -1,
+                &credit,
+                DT_CENTER | DT_VCENTER | DT_WORDBREAK | DT_NOPREFIX);
+            SelectObject(hdc, old_font);
             EndPaint(hwnd, &ps);
             return 0;
         }
@@ -4054,7 +4139,7 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             HDC dc = reinterpret_cast<HDC>(wp);
             SetBkMode(dc, TRANSPARENT);
             int ctl_id = GetDlgCtrlID(reinterpret_cast<HWND>(lp));
-            if (ctl_id == IDW_SUBTITLE || ctl_id == IDW_ACTIONS_HINT) {
+            if (ctl_id == IDW_SUBTITLE) {
                 SetTextColor(dc, g_theme->text_secondary);
             } else if (ctl_id == IDW_LANG_LABEL || ctl_id == IDW_ACTIONS_TITLE) {
                 SetTextColor(dc, g_theme->accent);
@@ -4261,8 +4346,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             RECT r = dis->rcItem;
             bool pressed = (dis->itemState & ODS_SELECTED) != 0;
             bool active = false;
-            if (btn == g.measure || btn == g.autoy) {
-                active = (SendMessageW(btn, BM_GETCHECK, 0, 0) == BST_CHECKED);
+            if (btn == g.measure) {
+                active = g.measure_mode;
+            } else if (btn == g.autoy) {
+                active = g.auto_y;
             } else if (btn == g.mode_time) {
                 active = !g.freq_mode;
             } else if (btn == g.mode_freq) {
@@ -4461,15 +4548,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     g.active_marker = -1;
                     set_status();
                     return 0;
-                case IDM_SPEED_00001: g.play_speed = 0.0001; set_status(); return 0;
-                case IDM_SPEED_0001: g.play_speed = 0.001; set_status(); return 0;
-                case IDM_SPEED_001: g.play_speed = 0.01; set_status(); return 0;
-                case IDM_SPEED_01: g.play_speed = 0.1; set_status(); return 0;
-                case IDM_SPEED_05: g.play_speed = 0.5; set_status(); return 0;
-                case IDM_SPEED_1: g.play_speed = 1.0; set_status(); return 0;
-                case IDM_SPEED_2: g.play_speed = 2.0; set_status(); return 0;
-                case IDM_SPEED_5: g.play_speed = 5.0; set_status(); return 0;
-                case IDM_SPEED_10: g.play_speed = 10.0; set_status(); return 0;
+                case IDM_SPEED_00001: set_play_speed(0.0001); return 0;
+                case IDM_SPEED_0001: set_play_speed(0.001); return 0;
+                case IDM_SPEED_001: set_play_speed(0.01); return 0;
+                case IDM_SPEED_01: set_play_speed(0.1); return 0;
+                case IDM_SPEED_05: set_play_speed(0.5); return 0;
+                case IDM_SPEED_1: set_play_speed(1.0); return 0;
+                case IDM_SPEED_2: set_play_speed(2.0); return 0;
+                case IDM_SPEED_5: set_play_speed(5.0); return 0;
+                case IDM_SPEED_10: set_play_speed(10.0); return 0;
+                case IDM_SPEED_CUSTOM: {
+                    double speed = g.play_speed;
+                    if (prompt_custom_play_speed(speed)) set_play_speed(speed);
+                    return 0;
+                }
                 case IDM_UNDO:
                     pop_undo();
                     InvalidateRect(hwnd, nullptr, FALSE);
