@@ -2502,6 +2502,7 @@ void draw_time(HDC dc, const RECT& p) {
 
     double fft0 = 0.0, fft1 = 0.0;
     bool show_fft_window = false;
+    bool has_visible_fft_window = false;
     int fft_left_px = 0, fft_right_px = 0;
     if (g.fft_selecting) {
         fft0 = g.fft_select_anchor_t;
@@ -2513,10 +2514,15 @@ void draw_time(HDC dc, const RECT& p) {
         show_fft_window = true;
     }
     if (show_fft_window) {
-        clamp_time_window(fft0, fft1);
-        const double vis0 = std::max(fft0, g.win_start);
-        const double vis1 = std::min(fft1, g.win_end);
+        double sel0 = std::min(fft0, fft1);
+        double sel1 = std::max(fft0, fft1);
+        clamp_time_window(sel0, sel1);
+        fft0 = sel0;
+        fft1 = sel1;
+        const double vis0 = std::max(sel0, g.win_start);
+        const double vis1 = std::min(sel1, g.win_end);
         if (vis1 > vis0) {
+            has_visible_fft_window = true;
             fft_left_px = mapx(vis0);
             fft_right_px = mapx(vis1);
             if (fft_right_px <= fft_left_px) fft_right_px = fft_left_px + 1;
@@ -2614,16 +2620,9 @@ void draw_time(HDC dc, const RECT& p) {
     SelectClipRgn(dc, nullptr);
     DeleteObject(clip);
 
-    if (show_fft_window && fft_right_px > fft_left_px) {
+    if (show_fft_window) {
         HRGN overlay_clip = CreateRectRgn(p.left, p.top, p.right + 1, p.bottom + 1);
         SelectClipRgn(dc, overlay_clip);
-
-        HPEN sel_pen = CreatePen(PS_DOT, 1, g_theme->accent);
-        HGDIOBJ old_pen = SelectObject(dc, sel_pen);
-        MoveToEx(dc, fft_left_px, p.top, nullptr); LineTo(dc, fft_left_px, p.bottom);
-        MoveToEx(dc, fft_right_px, p.top, nullptr); LineTo(dc, fft_right_px, p.bottom);
-        SelectObject(dc, old_pen);
-        DeleteObject(sel_pen);
 
         HPEN tick_pen = CreatePen(PS_SOLID, 2, g_theme->accent);
         HGDIOBJ old_tick_pen = SelectObject(dc, tick_pen);
@@ -2641,11 +2640,15 @@ void draw_time(HDC dc, const RECT& p) {
             if (min_x > max_x) return (static_cast<int>(p.left) + static_cast<int>(p.right)) / 2;
             return std::clamp(x, min_x, max_x);
         };
-        const int left_x = clamp_handle_x(fft_left_px);
-        const int right_x = clamp_handle_x(fft_right_px);
+        const int left_x = clamp_handle_x(mapx(fft0));
+        const int right_x = clamp_handle_x(mapx(fft1));
         {
-            const int fill_left = std::min(left_x, right_x);
-            const int fill_right = std::max(left_x, right_x);
+            const int sel_left = has_visible_fft_window
+                ? std::clamp(std::min(fft_left_px, fft_right_px), static_cast<int>(p.left) + 1, static_cast<int>(p.right) - 1)
+                : static_cast<int>(p.right) - 1;
+            const int sel_right = has_visible_fft_window
+                ? std::clamp(std::max(fft_left_px, fft_right_px), static_cast<int>(p.left) + 1, static_cast<int>(p.right) - 1)
+                : static_cast<int>(p.left) + 1;
             const int shade_top = static_cast<int>(p.top) + 1;
             const int shade_bottom = static_cast<int>(p.bottom) - 1;
             const int shade_h = shade_bottom - shade_top;
@@ -2653,20 +2656,32 @@ void draw_time(HDC dc, const RECT& p) {
                 Gdiplus::Graphics gfx(dc);
                 gfx.SetCompositingMode(Gdiplus::CompositingModeSourceOver);
                 const bool dark = (g_theme == &kDarkTheme);
-                const Gdiplus::Color fill_color(dark ? 22 : 18,
+                const Gdiplus::Color outer_fill_color(dark ? 48 : 34,
                     GetRValue(g_theme->text_secondary),
                     GetGValue(g_theme->text_secondary),
                     GetBValue(g_theme->text_secondary));
-                const Gdiplus::Color hatch_color(dark ? 48 : 60,
+                const Gdiplus::Color outer_hatch_color(dark ? 92 : 76,
+                    GetRValue(g_theme->accent),
+                    GetGValue(g_theme->accent),
+                    GetBValue(g_theme->accent));
+                const Gdiplus::Color selected_fill_color(dark ? 14 : 10,
+                    GetRValue(g_theme->accent),
+                    GetGValue(g_theme->accent),
+                    GetBValue(g_theme->accent));
+                const Gdiplus::Color selected_edge_color(dark ? 140 : 120,
+                    GetRValue(g_theme->accent),
+                    GetGValue(g_theme->accent),
+                    GetBValue(g_theme->accent));
+                const Gdiplus::Color selected_edge_soft(dark ? 70 : 58,
                     GetRValue(g_theme->text_secondary),
                     GetGValue(g_theme->text_secondary),
                     GetBValue(g_theme->text_secondary));
                 const Gdiplus::Color clear_color(0, 0, 0, 0);
 
-                auto shade_rect = [&](int x0, int x1) {
+                auto fill_rect = [&](int x0, int x1, const Gdiplus::Color& fill, const Gdiplus::Color& hatch_color, Gdiplus::HatchStyle hatch_style) {
                     if (x1 <= x0) return;
                     const int w = x1 - x0;
-                    Gdiplus::SolidBrush fill_brush(fill_color);
+                    Gdiplus::SolidBrush fill_brush(fill);
                     gfx.FillRectangle(
                         &fill_brush,
                         static_cast<Gdiplus::REAL>(x0),
@@ -2674,7 +2689,7 @@ void draw_time(HDC dc, const RECT& p) {
                         static_cast<Gdiplus::REAL>(w),
                         static_cast<Gdiplus::REAL>(shade_h));
                     Gdiplus::HatchBrush hatch(
-                        Gdiplus::HatchStyleLightUpwardDiagonal,
+                        hatch_style,
                         hatch_color,
                         clear_color);
                     gfx.FillRectangle(
@@ -2685,8 +2700,76 @@ void draw_time(HDC dc, const RECT& p) {
                         static_cast<Gdiplus::REAL>(shade_h));
                 };
 
-                shade_rect(static_cast<int>(p.left) + 1, fill_left);
-                shade_rect(fill_right, static_cast<int>(p.right));
+                auto tint_rect = [&](int x0, int x1, const Gdiplus::Color& fill) {
+                    if (x1 <= x0) return;
+                    const int w = x1 - x0;
+                    Gdiplus::SolidBrush fill_brush(fill);
+                    gfx.FillRectangle(
+                        &fill_brush,
+                        static_cast<Gdiplus::REAL>(x0),
+                        static_cast<Gdiplus::REAL>(shade_top),
+                        static_cast<Gdiplus::REAL>(w),
+                        static_cast<Gdiplus::REAL>(shade_h));
+                };
+
+                fill_rect(static_cast<int>(p.left) + 1, sel_left, outer_fill_color, outer_hatch_color, Gdiplus::HatchStyleWideDownwardDiagonal);
+                fill_rect(sel_right, static_cast<int>(p.right), outer_fill_color, outer_hatch_color, Gdiplus::HatchStyleWideDownwardDiagonal);
+                if (has_visible_fft_window && sel_right > sel_left) {
+                    tint_rect(sel_left, sel_right, selected_fill_color);
+                }
+
+                if (has_visible_fft_window && sel_right > sel_left) {
+                    HPEN sel_pen = CreatePen(PS_DOT, 1, g_theme->accent);
+                    HGDIOBJ old_pen = SelectObject(dc, sel_pen);
+                    MoveToEx(dc, sel_left, p.top, nullptr); LineTo(dc, sel_left, p.bottom);
+                    MoveToEx(dc, sel_right, p.top, nullptr); LineTo(dc, sel_right, p.bottom);
+                    SelectObject(dc, old_pen);
+                    DeleteObject(sel_pen);
+
+                    Gdiplus::Pen edge_pen(selected_edge_color, 1.0f);
+                    gfx.DrawLine(&edge_pen,
+                        static_cast<Gdiplus::REAL>(sel_left),
+                        static_cast<Gdiplus::REAL>(shade_top),
+                        static_cast<Gdiplus::REAL>(sel_left),
+                        static_cast<Gdiplus::REAL>(shade_bottom));
+                    gfx.DrawLine(&edge_pen,
+                        static_cast<Gdiplus::REAL>(sel_right),
+                        static_cast<Gdiplus::REAL>(shade_top),
+                        static_cast<Gdiplus::REAL>(sel_right),
+                        static_cast<Gdiplus::REAL>(shade_bottom));
+                    gfx.DrawLine(&edge_pen,
+                        static_cast<Gdiplus::REAL>(sel_left),
+                        static_cast<Gdiplus::REAL>(shade_top),
+                        static_cast<Gdiplus::REAL>(sel_right),
+                        static_cast<Gdiplus::REAL>(shade_top));
+                    gfx.DrawLine(&edge_pen,
+                        static_cast<Gdiplus::REAL>(sel_left),
+                        static_cast<Gdiplus::REAL>(shade_bottom),
+                        static_cast<Gdiplus::REAL>(sel_right),
+                        static_cast<Gdiplus::REAL>(shade_bottom));
+
+                    Gdiplus::Pen soft_pen(selected_edge_soft, 1.0f);
+                    gfx.DrawLine(&soft_pen,
+                        static_cast<Gdiplus::REAL>(sel_left + 1),
+                        static_cast<Gdiplus::REAL>(shade_top),
+                        static_cast<Gdiplus::REAL>(sel_left + 1),
+                        static_cast<Gdiplus::REAL>(shade_bottom));
+                    gfx.DrawLine(&soft_pen,
+                        static_cast<Gdiplus::REAL>(sel_right - 1),
+                        static_cast<Gdiplus::REAL>(shade_top),
+                        static_cast<Gdiplus::REAL>(sel_right - 1),
+                        static_cast<Gdiplus::REAL>(shade_bottom));
+                    gfx.DrawLine(&soft_pen,
+                        static_cast<Gdiplus::REAL>(sel_left),
+                        static_cast<Gdiplus::REAL>(shade_top + 1),
+                        static_cast<Gdiplus::REAL>(sel_right),
+                        static_cast<Gdiplus::REAL>(shade_top + 1));
+                    gfx.DrawLine(&soft_pen,
+                        static_cast<Gdiplus::REAL>(sel_left),
+                        static_cast<Gdiplus::REAL>(shade_bottom - 1),
+                        static_cast<Gdiplus::REAL>(sel_right),
+                        static_cast<Gdiplus::REAL>(shade_bottom - 1));
+                }
             }
         }
 
@@ -2722,8 +2805,10 @@ void draw_time(HDC dc, const RECT& p) {
             DeleteObject(dot_brush);
         };
 
-        draw_handle(left_x);
-        draw_handle(right_x);
+        if (has_visible_fft_window) {
+            draw_handle(left_x);
+            draw_handle(right_x);
+        }
 
         SelectObject(dc, old_tick_pen);
         DeleteObject(tick_pen);

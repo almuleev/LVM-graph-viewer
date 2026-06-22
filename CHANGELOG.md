@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.9.3
+
+- Исправлено поведение выделенного диапазона при приближении: индикация больше не пропадает, если текущий экран смещён относительно выделенного окна.
+- Fixed selected-range behaviour during zooming: the visual indication no longer disappears when the current viewport moves away from the selected window.
+- Штриховка и затемнение теперь подчёркивают именно невыделенную область, а внутри выделенного диапазона оставлена только мягкая подсветка без лишнего визуального шума.
+- Hatch shading now emphasizes the non-selected area, while the selected range keeps only a soft tint without extra visual noise.
+
 ## v0.9.2
 
 - Добавлено ручное задание точных значений для вертикальных и горизонтальных линий.
