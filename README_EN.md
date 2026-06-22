@@ -45,7 +45,13 @@ LabVIEW measurement logs are often easy to produce but inconvenient to inspect q
 - FFT peak inspection
 - Windowed processing for selected time ranges
 
-## Visual Preview
+## Interface Screenshots
+
+| Main workspace | Measurement groups in action |
+|---|---|
+| ![Main workspace](docs/assets/ui-overview-dark.jpg) | ![Measurement groups in action](docs/assets/ui-measurement-groups-dark.jpg) |
+
+## Data Previews
 
 | Time-domain | FFT |
 |---|---|
@@ -55,7 +61,8 @@ LabVIEW measurement logs are often easy to produce but inconvenient to inspect q
 |---|
 | ![Point groups preview](docs/assets/preview-point-groups.png) |
 
-The preview images are based on the bundled sample input files from [`lvm_files_for_tests`](lvm_files_for_tests).
+The screenshots above show the real application interface.
+The graph previews below are based on the bundled sample input files from [`lvm_files_for_tests`](lvm_files_for_tests).
 
 ## Quick Start
 

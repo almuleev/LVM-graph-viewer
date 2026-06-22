@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.9.1
+
+- Added real application screenshots to the GitHub presentation.
+- Promoted the dark main workspace and measurement-group workflow as the primary README visuals.
+- Cleaned up screenshot assets so the repository keeps only the selected UI images.
+
 ## v0.9.0
 
 - Reworked GitHub presentation with a new banner, cleaner documentation and visual previews.

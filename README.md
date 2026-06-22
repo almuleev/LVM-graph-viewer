@@ -44,7 +44,13 @@ The project includes two front ends built on one shared parsing and analysis cor
 - Exports PNG, CSV and TXT from the viewer
 - Includes sample files and regression tests in the repository
 
-## Visual Preview
+## Interface Screenshots
+
+| Main workspace | Measurement groups in action |
+|---|---|
+| ![Main workspace](docs/assets/ui-overview-dark.jpg) | ![Measurement groups in action](docs/assets/ui-measurement-groups-dark.jpg) |
+
+## Data Previews
 
 | Time-domain view | FFT view |
 |---|---|
@@ -54,7 +60,8 @@ The project includes two front ends built on one shared parsing and analysis cor
 |---|
 | ![Measurement groups preview](docs/assets/preview-point-groups.png) |
 
-All preview graphs above were generated from the bundled sample dataset in [`lvm_files_for_tests`](lvm_files_for_tests).
+The interface screenshots above show the real application UI.
+The graph previews below were generated from the bundled sample dataset in [`lvm_files_for_tests`](lvm_files_for_tests).
 
 ## Quick Start
 
