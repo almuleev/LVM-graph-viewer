@@ -16,7 +16,7 @@
 //   - Keyboard shortcuts (see РЎРїСЂР°РІРєР° в†’ Р“РѕСЂСЏС‡РёРµ РєР»Р°РІРёС€Рё / F1).
 //
 // Build:
-//   g++ -std=c++17 -O2 -municode -static -mwindows -o lvm_viewer_gui.exe \
+//   g++ -std=c++17 -O2 -municode -static -mwindows -o LVM-graph-viewer-win-x64.exe \
 //       gui_main.cpp lvm_parser.cpp fft.cpp analysis.cpp \
 //       -lcomdlg32 -lgdi32 -luser32 -lgdiplus -lcomctl32
 #ifndef UNICODE
@@ -80,6 +80,8 @@ enum {
     IDM_SNAP,           // snap measurement markers to data
     IDM_ADD_VLINE,      // arm: place a vertical guide line
     IDM_ADD_HLINE,      // arm: place a horizontal guide line
+    IDM_ADD_VLINE_EXACT, // add a vertical guide line by exact value
+    IDM_ADD_HLINE_EXACT, // add a horizontal guide line by exact value
     IDM_ADD_MARKER,     // arm: place a marker
     IDM_CLEAR_LINES,
     IDM_CLEAR_MARKERS,
@@ -249,15 +251,21 @@ struct OwnerDrawMenuEntry {
 
 std::vector<std::unique_ptr<OwnerDrawMenuEntry>> g_menu_text_storage;
 
-struct SpeedPromptState {
+struct NumericPromptState {
     HWND wnd = nullptr;
     HWND edit = nullptr;
     bool done = false;
     bool accepted = false;
+    bool positive_only = true;
     double value = 1.0;
+    std::wstring title;
+    std::wstring label;
+    std::wstring apply_text;
+    std::wstring cancel_text;
+    std::wstring invalid_text;
 };
 
-SpeedPromptState g_speed_prompt;
+NumericPromptState g_numeric_prompt;
 
 void update_theme_brushes() {
     if (g_panel_brush) DeleteObject(g_panel_brush);
@@ -1361,8 +1369,10 @@ bool active_axis(double*& lo, double*& hi, double& minb, double& maxb, double& m
 }
 
 bool current_time_yrange(double& ymin, double& ymax);
+bool current_freq_yrange(double& ymin, double& ymax);
 void sync_menu();
 void set_mode(bool freq_mode);
+void invalidate_plot();
 void rebuild_ui();
 void rebuild_accelerators();
 void refresh_settings_controls();
@@ -1406,6 +1416,32 @@ const wchar_t* speed_prompt_invalid_text() {
         : L"Введите положительное число, например 0.5, 1 или 2.75.";
 }
 
+const wchar_t* guide_prompt_title_text(bool vertical) {
+    if (g_str == &kEn) return vertical ? L"Vertical guide line" : L"Horizontal guide line";
+    return vertical ? L"Вертикальная линия" : L"Горизонтальная линия";
+}
+
+const wchar_t* guide_prompt_label_text(bool vertical) {
+    if (g_str == &kEn) {
+        return vertical ? L"Enter the exact X-axis value:" : L"Enter the exact Y-axis value:";
+    }
+    return vertical ? L"Введите точное значение по оси X:" : L"Введите точное значение по оси Y:";
+}
+
+const wchar_t* guide_prompt_apply_text() {
+    return (g_str == &kEn) ? L"Add" : L"Добавить";
+}
+
+const wchar_t* guide_prompt_cancel_text() {
+    return speed_prompt_cancel_text();
+}
+
+const wchar_t* guide_prompt_invalid_text() {
+    return (g_str == &kEn)
+        ? L"Enter a finite number, for example -1, 0, or 2.75."
+        : L"Введите конечное число, например -1, 0 или 2.75.";
+}
+
 void set_play_speed(double speed) {
     if (!(speed > 0.0) || !std::isfinite(speed)) return;
     if (g.playing) {
@@ -1427,33 +1463,33 @@ void set_play_speed(double speed) {
     set_status();
 }
 
-LRESULT CALLBACK SpeedPromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+LRESULT CALLBACK NumericPromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE: {
             HFONT font = g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
-            CreateWindowExW(0, L"STATIC", speed_prompt_label_text(),
+            CreateWindowExW(0, L"STATIC", g_numeric_prompt.label.c_str(),
                             WS_CHILD | WS_VISIBLE | SS_LEFT,
                             16, 16, 320, 20, hwnd, nullptr,
                             reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
-            g_speed_prompt.edit = CreateWindowExW(
-                WS_EX_CLIENTEDGE, L"EDIT", format_edit_number(g_speed_prompt.value).c_str(),
+            g_numeric_prompt.edit = CreateWindowExW(
+                WS_EX_CLIENTEDGE, L"EDIT", format_edit_number(g_numeric_prompt.value).c_str(),
                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
                 16, 44, 320, 24, hwnd,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SPEED_PROMPT_EDIT)),
                 reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
             HWND ok = CreateWindowExW(
-                0, L"BUTTON", speed_prompt_apply_text(),
+                0, L"BUTTON", g_numeric_prompt.apply_text.c_str(),
                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
                 86, 82, 116, 28, hwnd,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SPEED_PROMPT_OK)),
                 reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
             HWND cancel = CreateWindowExW(
-                0, L"BUTTON", speed_prompt_cancel_text(),
+                0, L"BUTTON", g_numeric_prompt.cancel_text.c_str(),
                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
                 214, 82, 122, 28, hwnd,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SPEED_PROMPT_CANCEL)),
                 reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
-            if (g_speed_prompt.edit) SendMessageW(g_speed_prompt.edit, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            if (g_numeric_prompt.edit) SendMessageW(g_numeric_prompt.edit, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
             if (ok) SendMessageW(ok, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
             if (cancel) SendMessageW(cancel, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
             HWND label = GetWindow(hwnd, GW_CHILD);
@@ -1465,14 +1501,17 @@ LRESULT CALLBACK SpeedPromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 case IDC_SPEED_PROMPT_OK: {
                     double value = 0.0;
                     wchar_t buf[128]{};
-                    if (g_speed_prompt.edit) GetWindowTextW(g_speed_prompt.edit, buf, 128);
-                    if (!parse_wide_double_text(buf, value) || !(value > 0.0) || !std::isfinite(value)) {
-                        MessageBoxW(hwnd, speed_prompt_invalid_text(), speed_prompt_title_text(), MB_OK | MB_ICONWARNING);
-                        if (g_speed_prompt.edit) SetFocus(g_speed_prompt.edit);
+                    if (g_numeric_prompt.edit) GetWindowTextW(g_numeric_prompt.edit, buf, 128);
+                    const bool valid = parse_wide_double_text(buf, value) &&
+                                       std::isfinite(value) &&
+                                       (!g_numeric_prompt.positive_only || value > 0.0);
+                    if (!valid) {
+                        MessageBoxW(hwnd, g_numeric_prompt.invalid_text.c_str(), g_numeric_prompt.title.c_str(), MB_OK | MB_ICONWARNING);
+                        if (g_numeric_prompt.edit) SetFocus(g_numeric_prompt.edit);
                         return 0;
                     }
-                    g_speed_prompt.value = value;
-                    g_speed_prompt.accepted = true;
+                    g_numeric_prompt.value = value;
+                    g_numeric_prompt.accepted = true;
                     DestroyWindow(hwnd);
                     return 0;
                 }
@@ -1524,57 +1563,66 @@ LRESULT CALLBACK SpeedPromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return reinterpret_cast<LRESULT>(g_panel_brush);
         }
         case WM_DESTROY:
-            g_speed_prompt.done = true;
-            g_speed_prompt.wnd = nullptr;
-            g_speed_prompt.edit = nullptr;
+            g_numeric_prompt.done = true;
+            g_numeric_prompt.wnd = nullptr;
+            g_numeric_prompt.edit = nullptr;
             return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-bool prompt_custom_play_speed(double& out_speed) {
+bool prompt_numeric_value(const wchar_t* title, const wchar_t* label,
+                          const wchar_t* apply_text, const wchar_t* cancel_text,
+                          const wchar_t* invalid_text, double initial_value,
+                          bool positive_only, double& out_value) {
     static ATOM atom = 0;
     if (!atom) {
         WNDCLASSEXW wc = { sizeof(wc) };
-        wc.lpfnWndProc = SpeedPromptProc;
+        wc.lpfnWndProc = NumericPromptProc;
         wc.hInstance = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(g.main, GWLP_HINSTANCE));
         wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
         wc.hbrBackground = nullptr;
-        wc.lpszClassName = L"LvmSpeedPrompt";
+        wc.lpszClassName = L"LvmNumericPrompt";
         atom = RegisterClassExW(&wc);
     }
 
-    g_speed_prompt.done = false;
-    g_speed_prompt.accepted = false;
-    g_speed_prompt.value = g.play_speed;
-    g_speed_prompt.wnd = CreateWindowExW(
+    g_numeric_prompt.done = false;
+    g_numeric_prompt.accepted = false;
+    g_numeric_prompt.positive_only = positive_only;
+    g_numeric_prompt.value = initial_value;
+    g_numeric_prompt.title = title;
+    g_numeric_prompt.label = label;
+    g_numeric_prompt.apply_text = apply_text;
+    g_numeric_prompt.cancel_text = cancel_text;
+    g_numeric_prompt.invalid_text = invalid_text;
+    g_numeric_prompt.wnd = CreateWindowExW(
         WS_EX_DLGMODALFRAME | WS_EX_TOOLWINDOW,
-        L"LvmSpeedPrompt",
-        speed_prompt_title_text(),
+        L"LvmNumericPrompt",
+        g_numeric_prompt.title.c_str(),
         WS_CAPTION | WS_SYSMENU | WS_POPUP | WS_VISIBLE,
         CW_USEDEFAULT, CW_USEDEFAULT, 368, 150,
         g.main, nullptr,
         reinterpret_cast<HINSTANCE>(GetWindowLongPtr(g.main, GWLP_HINSTANCE)),
         nullptr);
-    if (!g_speed_prompt.wnd) return false;
+    if (!g_numeric_prompt.wnd) return false;
 
     RECT mr{}, wr{};
     GetWindowRect(g.main, &mr);
-    GetWindowRect(g_speed_prompt.wnd, &wr);
+    GetWindowRect(g_numeric_prompt.wnd, &wr);
     SetWindowPos(
-        g_speed_prompt.wnd, HWND_TOP,
+        g_numeric_prompt.wnd, HWND_TOP,
         mr.left + ((mr.right - mr.left) - (wr.right - wr.left)) / 2,
         mr.top + ((mr.bottom - mr.top) - (wr.bottom - wr.top)) / 2,
         0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
     EnableWindow(g.main, FALSE);
-    if (g_speed_prompt.edit) {
-        SetFocus(g_speed_prompt.edit);
-        SendMessageW(g_speed_prompt.edit, EM_SETSEL, 0, -1);
+    if (g_numeric_prompt.edit) {
+        SetFocus(g_numeric_prompt.edit);
+        SendMessageW(g_numeric_prompt.edit, EM_SETSEL, 0, -1);
     }
 
     MSG msg;
-    while (!g_speed_prompt.done && GetMessageW(&msg, nullptr, 0, 0) > 0) {
-        if (!IsDialogMessageW(g_speed_prompt.wnd, &msg)) {
+    while (!g_numeric_prompt.done && GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        if (!IsDialogMessageW(g_numeric_prompt.wnd, &msg)) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
@@ -1582,9 +1630,71 @@ bool prompt_custom_play_speed(double& out_speed) {
 
     EnableWindow(g.main, TRUE);
     SetForegroundWindow(g.main);
-    if (!g_speed_prompt.accepted) return false;
-    out_speed = g_speed_prompt.value;
+    if (!g_numeric_prompt.accepted) return false;
+    out_value = g_numeric_prompt.value;
     return true;
+}
+
+bool prompt_custom_play_speed(double& out_speed) {
+    return prompt_numeric_value(
+        speed_prompt_title_text(),
+        speed_prompt_label_text(),
+        speed_prompt_apply_text(),
+        speed_prompt_cancel_text(),
+        speed_prompt_invalid_text(),
+        g.play_speed,
+        true,
+        out_speed);
+}
+
+bool prompt_exact_guide_value(bool vertical, double& out_value) {
+    double default_value = 0.0;
+    if (vertical) {
+        default_value = g.freq_mode ? 0.5 * (g.freq_start + g.freq_end)
+                                    : 0.5 * (g.win_start + g.win_end);
+    } else if (g.freq_mode) {
+        double ymin = 0.0, ymax = 0.0;
+        if (!current_freq_yrange(ymin, ymax)) {
+            ymin = 0.0;
+            ymax = 1.0;
+        }
+        default_value = 0.5 * (ymin + ymax);
+    } else {
+        double ymin = 0.0, ymax = 0.0;
+        if (!current_time_yrange(ymin, ymax)) {
+            ymin = -1.0;
+            ymax = 1.0;
+        } else if (!g.auto_y) {
+            ymin = g.y_lock_min;
+            ymax = g.y_lock_max;
+        }
+        default_value = 0.5 * (ymin + ymax);
+    }
+    return prompt_numeric_value(
+        guide_prompt_title_text(vertical),
+        guide_prompt_label_text(vertical),
+        guide_prompt_apply_text(),
+        guide_prompt_cancel_text(),
+        guide_prompt_invalid_text(),
+        default_value,
+        false,
+        out_value);
+}
+
+void add_guide_line(bool vertical, double value) {
+    GuideLine gl;
+    gl.vertical = vertical;
+    gl.value = value;
+    gl.freq = g.freq_mode;
+    g.guides.push_back(gl);
+    UndoAction ua;
+    ua.type = UndoAction::ADD_LINE;
+    ua.line = gl;
+    push_undo(ua);
+    g.pending_line = 0;
+    sync_menu();
+    set_status();
+    invalidate_plot();
 }
 
 void invalidate_plot() {
@@ -1912,6 +2022,31 @@ bool current_time_yrange(double& ymin, double& ymax) {
     if (ymax - ymin < 1e-12) { ymin -= 1; ymax += 1; }
     const double pad = (ymax - ymin) * 0.05;
     ymin -= pad; ymax += pad;
+    return true;
+}
+
+// Auto-fit amplitude range over the currently visible FFT window (with 5% pad).
+bool current_freq_yrange(double& ymin, double& ymax) {
+    if (!g.freq_mode) return false;
+    if (!g.spec_valid || g.spec.freqs.size() < 2) return false;
+    ymin = 0.0;
+    ymax = 0.0;
+    std::size_t klo = static_cast<std::size_t>(
+        std::lower_bound(g.spec.freqs.begin(), g.spec.freqs.end(), g.freq_start) - g.spec.freqs.begin());
+    std::size_t khi = static_cast<std::size_t>(
+        std::upper_bound(g.spec.freqs.begin(), g.spec.freqs.end(), g.freq_end) - g.spec.freqs.begin());
+    if (klo > 0) --klo;
+    if (khi < g.spec.freqs.size()) ++khi;
+    for (std::size_t j = 0; j < g.spec.amp.size(); ++j) {
+        int ci = channel_index_by_name(g.spec.names[j]);
+        if (ci < 0 || !g.visible[ci]) continue;
+        for (std::size_t k = klo; k < khi; ++k) {
+            if (g.spec.amp[j][k] > ymax) ymax = g.spec.amp[j][k];
+        }
+    }
+    if (ymax <= 0.0) ymax = 1.0;
+    const double pad = ymax * 0.05;
+    ymax += pad;
     return true;
 }
 
@@ -2480,6 +2615,9 @@ void draw_time(HDC dc, const RECT& p) {
     DeleteObject(clip);
 
     if (show_fft_window && fft_right_px > fft_left_px) {
+        HRGN overlay_clip = CreateRectRgn(p.left, p.top, p.right + 1, p.bottom + 1);
+        SelectClipRgn(dc, overlay_clip);
+
         HPEN sel_pen = CreatePen(PS_DOT, 1, g_theme->accent);
         HGDIOBJ old_pen = SelectObject(dc, sel_pen);
         MoveToEx(dc, fft_left_px, p.top, nullptr); LineTo(dc, fft_left_px, p.bottom);
@@ -2489,17 +2627,109 @@ void draw_time(HDC dc, const RECT& p) {
 
         HPEN tick_pen = CreatePen(PS_SOLID, 2, g_theme->accent);
         HGDIOBJ old_tick_pen = SelectObject(dc, tick_pen);
-        const int tick = 8;
+        const int tick = 7;
         const int top_y = p.top + 2;
         const int bottom_y = p.bottom - 2;
+        const int handle_margin = 9;
+        const int tri_w = 6;
+        const int tri_h = 7;
+        const COLORREF handle_outline = g_theme->btn_border;
+        const COLORREF handle_fill = g_theme->accent;
+        const int min_x = static_cast<int>(p.left) + handle_margin;
+        const int max_x = static_cast<int>(p.right) - handle_margin;
+        auto clamp_handle_x = [&](int x) {
+            if (min_x > max_x) return (static_cast<int>(p.left) + static_cast<int>(p.right)) / 2;
+            return std::clamp(x, min_x, max_x);
+        };
+        const int left_x = clamp_handle_x(fft_left_px);
+        const int right_x = clamp_handle_x(fft_right_px);
+        {
+            const int fill_left = std::min(left_x, right_x);
+            const int fill_right = std::max(left_x, right_x);
+            const int shade_top = static_cast<int>(p.top) + 1;
+            const int shade_bottom = static_cast<int>(p.bottom) - 1;
+            const int shade_h = shade_bottom - shade_top;
+            if (shade_h > 0) {
+                Gdiplus::Graphics gfx(dc);
+                gfx.SetCompositingMode(Gdiplus::CompositingModeSourceOver);
+                const bool dark = (g_theme == &kDarkTheme);
+                const Gdiplus::Color fill_color(dark ? 22 : 18,
+                    GetRValue(g_theme->text_secondary),
+                    GetGValue(g_theme->text_secondary),
+                    GetBValue(g_theme->text_secondary));
+                const Gdiplus::Color hatch_color(dark ? 48 : 60,
+                    GetRValue(g_theme->text_secondary),
+                    GetGValue(g_theme->text_secondary),
+                    GetBValue(g_theme->text_secondary));
+                const Gdiplus::Color clear_color(0, 0, 0, 0);
 
-        MoveToEx(dc, fft_left_px, top_y, nullptr); LineTo(dc, fft_left_px + tick, top_y);
-        MoveToEx(dc, fft_right_px - tick, top_y, nullptr); LineTo(dc, fft_right_px, top_y);
-        MoveToEx(dc, fft_left_px, bottom_y, nullptr); LineTo(dc, fft_left_px + tick, bottom_y);
-        MoveToEx(dc, fft_right_px - tick, bottom_y, nullptr); LineTo(dc, fft_right_px, bottom_y);
+                auto shade_rect = [&](int x0, int x1) {
+                    if (x1 <= x0) return;
+                    const int w = x1 - x0;
+                    Gdiplus::SolidBrush fill_brush(fill_color);
+                    gfx.FillRectangle(
+                        &fill_brush,
+                        static_cast<Gdiplus::REAL>(x0),
+                        static_cast<Gdiplus::REAL>(shade_top),
+                        static_cast<Gdiplus::REAL>(w),
+                        static_cast<Gdiplus::REAL>(shade_h));
+                    Gdiplus::HatchBrush hatch(
+                        Gdiplus::HatchStyleLightUpwardDiagonal,
+                        hatch_color,
+                        clear_color);
+                    gfx.FillRectangle(
+                        &hatch,
+                        static_cast<Gdiplus::REAL>(x0),
+                        static_cast<Gdiplus::REAL>(shade_top),
+                        static_cast<Gdiplus::REAL>(w),
+                        static_cast<Gdiplus::REAL>(shade_h));
+                };
+
+                shade_rect(static_cast<int>(p.left) + 1, fill_left);
+                shade_rect(fill_right, static_cast<int>(p.right));
+            }
+        }
+
+        auto draw_handle = [&](int x) {
+            MoveToEx(dc, x, top_y, nullptr); LineTo(dc, x + tick, top_y);
+            MoveToEx(dc, x - tick, bottom_y, nullptr); LineTo(dc, x, bottom_y);
+
+            POINT top_tri[3] = {
+                {x, top_y + tri_h},
+                {x - tri_w, top_y},
+                {x + tri_w, top_y},
+            };
+            HBRUSH tri_brush = CreateSolidBrush(handle_fill);
+            HPEN tri_pen = CreatePen(PS_SOLID, 1, handle_outline);
+            HGDIOBJ old_brush = SelectObject(dc, tri_brush);
+            HGDIOBJ old_pen2 = SelectObject(dc, tri_pen);
+            Polygon(dc, top_tri, 3);
+            SelectObject(dc, old_pen2);
+            SelectObject(dc, old_brush);
+            DeleteObject(tri_pen);
+            DeleteObject(tri_brush);
+
+            const int dot_r = 4;
+            const int dot_y = bottom_y - 1;
+            HBRUSH dot_brush = CreateSolidBrush(handle_fill);
+            HPEN dot_pen = CreatePen(PS_SOLID, 1, handle_outline);
+            old_brush = SelectObject(dc, dot_brush);
+            old_pen2 = SelectObject(dc, dot_pen);
+            Ellipse(dc, x - dot_r, dot_y - dot_r, x + dot_r + 1, dot_y + dot_r + 1);
+            SelectObject(dc, old_pen2);
+            SelectObject(dc, old_brush);
+            DeleteObject(dot_pen);
+            DeleteObject(dot_brush);
+        };
+
+        draw_handle(left_x);
+        draw_handle(right_x);
 
         SelectObject(dc, old_tick_pen);
         DeleteObject(tick_pen);
+
+        SelectClipRgn(dc, nullptr);
+        DeleteObject(overlay_clip);
     }
     draw_legend(dc, p);
 
@@ -3302,6 +3532,8 @@ std::wstring command_name(int command) {
         case IDM_ADD_MARKER: return en ? L"Marker" : L"Маркер";
         case IDM_ADD_VLINE: return en ? L"Vertical line" : L"Вертикальная линия";
         case IDM_ADD_HLINE: return en ? L"Horizontal line" : L"Горизонтальная линия";
+        case IDM_ADD_VLINE_EXACT: return en ? L"Vertical line (exact)" : L"Вертикальная линия (точно)";
+        case IDM_ADD_HLINE_EXACT: return en ? L"Horizontal line (exact)" : L"Горизонтальная линия (точно)";
         case IDC_AUTOY: return en ? L"Auto zoom" : L"Авто масштабирование";
         case IDM_VISMOOTH: return en ? L"Smoothing" : L"Сглаживание";
         case IDM_VPAN: return en ? L"Vertical pan" : L"Вертикальное панорамирование";
@@ -4086,11 +4318,15 @@ HMENU make_menu() {
         std::wstring measure_text = menu_text(en ? L"Points" : L"Точки", IDC_MEASURE);
         std::wstring marker_text = menu_text(en ? L"Marker" : L"Маркер", IDM_ADD_MARKER);
         std::wstring vline_text = menu_text(en ? L"Vertical line" : L"Вертикальная линия", IDM_ADD_VLINE);
+        std::wstring vline_exact_text = menu_text(en ? L"Vertical line (exact)..." : L"Вертикальная линия (точно)...", IDM_ADD_VLINE_EXACT);
         std::wstring hline_text = menu_text(en ? L"Horizontal line" : L"Горизонтальная линия", IDM_ADD_HLINE);
+        std::wstring hline_exact_text = menu_text(en ? L"Horizontal line (exact)..." : L"Горизонтальная линия (точно)...", IDM_ADD_HLINE_EXACT);
         append_menu_item_owner_draw(tools, IDC_MEASURE, measure_text);
         append_menu_item_owner_draw(tools, IDM_ADD_MARKER, marker_text);
         append_menu_item_owner_draw(tools, IDM_ADD_VLINE, vline_text);
+        append_menu_item_owner_draw(tools, IDM_ADD_VLINE_EXACT, vline_exact_text);
         append_menu_item_owner_draw(tools, IDM_ADD_HLINE, hline_text);
+        append_menu_item_owner_draw(tools, IDM_ADD_HLINE_EXACT, hline_exact_text);
         AppendMenuW(tools, MF_SEPARATOR, 0, nullptr);
         append_menu_item_owner_draw(tools, IDM_CLEAR_POINTS, en ? L"Clear points" : L"Очистить точки");
         append_menu_item_owner_draw(tools, IDM_CLEAR_MARKERS, en ? L"Clear markers" : L"Очистить маркеры");
@@ -4178,10 +4414,14 @@ HMENU make_menu() {
         append_menu_popup_owner_draw(bar, meas, menu_points);
 
         HMENU lines = CreatePopupMenu();
-        std::wstring vline_text = menu_text(en ? L"Vertical" : L"Вертикальная", IDM_ADD_VLINE);
-        std::wstring hline_text = menu_text(en ? L"Horizontal" : L"Горизонтальная", IDM_ADD_HLINE);
+        std::wstring vline_text = menu_text(en ? L"Vertical (click)" : L"Вертикальная (клик)", IDM_ADD_VLINE);
+        std::wstring vline_exact_text = menu_text(en ? L"Vertical (exact)..." : L"Вертикальная (точно)...", IDM_ADD_VLINE_EXACT);
+        std::wstring hline_text = menu_text(en ? L"Horizontal (click)" : L"Горизонтальная (клик)", IDM_ADD_HLINE);
+        std::wstring hline_exact_text = menu_text(en ? L"Horizontal (exact)..." : L"Горизонтальная (точно)...", IDM_ADD_HLINE_EXACT);
         append_menu_item_owner_draw(lines, IDM_ADD_VLINE, vline_text);
+        append_menu_item_owner_draw(lines, IDM_ADD_VLINE_EXACT, vline_exact_text);
         append_menu_item_owner_draw(lines, IDM_ADD_HLINE, hline_text);
+        append_menu_item_owner_draw(lines, IDM_ADD_HLINE_EXACT, hline_exact_text);
         AppendMenuW(lines, MF_SEPARATOR, 0, nullptr);
         append_menu_item_owner_draw(lines, IDM_CLEAR_LINES, en ? L"Clear" : L"Очистить");
         append_menu_popup_owner_draw(bar, lines, menu_lines);
@@ -4239,7 +4479,9 @@ HMENU make_menu() {
 
     HMENU lines = CreatePopupMenu();
     append_menu_item_owner_draw(lines, IDM_ADD_VLINE, L"Вертикальная\tL");
+    append_menu_item_owner_draw(lines, IDM_ADD_VLINE_EXACT, L"Вертикальная (точно)...");
     append_menu_item_owner_draw(lines, IDM_ADD_HLINE, L"Горизонтальная\tH");
+    append_menu_item_owner_draw(lines, IDM_ADD_HLINE_EXACT, L"Горизонтальная (точно)...");
     AppendMenuW(lines, MF_SEPARATOR, 0, nullptr);
     append_menu_item_owner_draw(lines, IDM_CLEAR_LINES, L"Очистить");
     append_menu_popup_owner_draw(bar, lines, L"Линии");
@@ -5464,6 +5706,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     sync_menu();
                     InvalidateRect(hwnd, nullptr, FALSE);
                     return 0;
+                case IDM_ADD_VLINE_EXACT: {
+                    if (!has_data()) { MessageBoxW(hwnd, g_str->msg_openfirst, g_str->msg_nodata, MB_ICONINFORMATION); return 0; }
+                    double value = 0.0;
+                    if (!prompt_exact_guide_value(true, value)) return 0;
+                    add_guide_line(true, value);
+                    return 0;
+                }
                 case IDM_ADD_HLINE:
                     if (!has_data()) { MessageBoxW(hwnd, g_str->msg_openfirst, g_str->msg_nodata, MB_ICONINFORMATION); return 0; }
                     if (g.pending_line == 2) {
@@ -5481,6 +5730,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     sync_menu();
                     InvalidateRect(hwnd, nullptr, FALSE);
                     return 0;
+                case IDM_ADD_HLINE_EXACT: {
+                    if (!has_data()) { MessageBoxW(hwnd, g_str->msg_openfirst, g_str->msg_nodata, MB_ICONINFORMATION); return 0; }
+                    double value = 0.0;
+                    if (!prompt_exact_guide_value(false, value)) return 0;
+                    add_guide_line(false, value);
+                    return 0;
+                }
                 case IDM_CLEAR_LINES:
                     if (!g.guides.empty()) {
                         UndoAction ua; ua.type = UndoAction::CLEAR_LINES; ua.saved_lines = g.guides;

@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.9.2
+
+- Добавлено ручное задание точных значений для вертикальных и горизонтальных линий.
+- Added manual input for exact vertical and horizontal guide line values.
+- Выбор диапазона через `Shift` стал заметнее: остальные участки графика приглушены штриховкой, а маркеры диапазона остаются видимыми.
+- Shift-based range selection is now easier to read: the rest of the graph is muted with a subtle hatch, and the range handles stay visible.
+
 ## v0.9.1
 
 - Added real application screenshots to the GitHub presentation.
@@ -8,16 +15,24 @@
 
 ## v0.9.0
 
-- Reworked GitHub presentation with a new banner, cleaner documentation and visual previews.
-- Added public-project essentials: MIT license, issue templates and cleaner repository hygiene.
+- Переработано оформление GitHub-страницы: новый баннер, более аккуратная документация и визуальные превью.
+- Reworked the GitHub presentation with a new banner, cleaner documentation, and visual previews.
+- Добавлены базовые элементы публичного проекта: лицензия MIT, шаблоны для issues и более аккуратная структура репозитория.
+- Added public-project essentials: MIT license, issue templates, and cleaner repository hygiene.
+- Добавлены независимые группы точек измерения с отдельными цветами и видимостью.
 - Introduced independent measurement point groups with separate colours and visibility.
-- Updated the settings window to manage active point colour, selected group colour and group visibility.
+- Обновлено окно настроек: управление цветом активной группы, цветом выбранной группы и видимостью групп.
+- Updated the settings window to manage active point colour, selected group colour, and group visibility.
+- Улучшены undo/redo для точек и отображение состояния точек.
 - Improved point-related undo/redo and point status reporting.
 
 ## v0.8.3
 
+- Восстановлено взаимодействие в окне настроек после прошлых UI-рефакторингов.
 - Restored settings interactions after earlier UI refactors.
+- Доработано поведение меню и настроек.
 - Refined menu and settings behaviour.
+- Продолжена полировка темы и согласованности интерфейса.
 - Continued polishing theme and interface consistency.
 
 ## v0.8.1
