@@ -27,10 +27,12 @@ struct LoadOptions {
 // Parsed dataset: a time vector and aligned channel columns.
 struct Dataset {
     std::vector<double> time;                  // first column (X / time)
+    std::vector<double> raw_time;              // original first column before any normalization
     std::vector<std::string> names;            // channel names, e.g. "Channel_1"
     std::vector<std::vector<double>> channels; // one vector per channel, aligned with time
     ParseStats stats;
     bool partial = false;                      // true when loading stopped early by options
+    bool time_rebuilt_from_headers = false;    // true when section Date/Time + X0 rebuilt the timeline
     bool ok = false;
     std::string error;
 

@@ -199,6 +199,9 @@ enum {
     IDW_ACTIONS_TITLE,
     IDW_ACTIONS_HINT,
     IDW_LANG_LABEL,
+    IDW_THEME_LABEL,
+    IDW_THEME_LIGHT,
+    IDW_THEME_DARK,
 };
 
 const int kTopBar = 72;        // two-row compact toolbar
@@ -458,12 +461,12 @@ static const Strings kRu = {
     L"LVM Viewer",
     L"Файл", L"Вид", L"Точки", L"Линии", L"Маркеры", L"Справка",
     L"Открыть файл…\tCtrl+O", L"Сохранить PNG…\tCtrl+S", L"Сохранить CSV…\tCtrl+E", L"Отменить\tCtrl+Z", L"Повторить\tCtrl+Shift+Z", L"Выход\tAlt+F4",
-    L"Время / Гц\tM", L"Увеличить\t+", L"Уменьшить\t−", L"Сбросить вид\tHome", L"Авто масштабирование", L"Сглаживание\tC", L"Вертикальное панорамирование\tP", L"Play / Pause\tПробел", L"Тёмная тема\tT", L"Скорость",
+    L"Время / Гц\tM", L"Увеличить\t+", L"Уменьшить\t−", L"Сбросить вид\tHome", L"Автомасштабирование", L"Сглаживание\tC", L"Вертикальное панорамирование\tP", L"Play / Pause\tПробел", L"Тёмная тема\tT", L"Скорость",
     L"Точки\tV", L"Настройки…", L"Очистить\tDelete",
     L"Вертикальная\tL", L"Горизонтальная\tH", L"Очистить",
     L"Добавить\tK", L"Очистить",
     L"Горячие клавиши…\tF1", L"О программе…",
-    L"Открыть", L"PNG", L"CSV", L"Время/Гц", L"▶ Play", L"⏸ Пауза", L"Точки", L"Сброс", L"Auto zoom", L"Настройки",
+    L"Открыть", L"PNG", L"CSV", L"Время/Гц", L"▶ Play", L"⏸ Пауза", L"Точки", L"Сброс", L"Автомасштабирование", L"Настройки",
     L"Каналы",
     L"Время", L"Гц (FFT)", L"Каналов", L"Точек", L"Окно", L"Y: авто", L"Y: фикс.", L"Линий", L"Маркеров", L"Скорость",
     L"Время, c", L"Частота, Гц",
@@ -478,7 +481,7 @@ static const Strings kRu = {
     L"Открыть файл", L"Настройки точек…", L"Горячие клавиши", L"Начать работу",
     L"Файлы\n  O / Ctrl+O\t— Открыть\n  S / Ctrl+S\t— PNG\n  E / Ctrl+E\t— CSV\n  Ctrl+Z\t— Отменить\n  Ctrl+Shift+Z\t— Повторить\n\nВид\n  M\t— Время/Гц\n  C\t— Сглаживание\n  + / ↑\t— Увеличить\n  − / ↓\t— Уменьшить\n  ← / →\t— Сдвиг влево/вправо\n  Home\t— Сброс\n  Ctrl+Home\t— В начало\n  Ctrl+End\t— В конец\n  Пробел\t— Play / Pause\n\nЛинии и маркеры\n  L\t— Вертикальная линия\n  H\t— Горизонтальная линия\n  K\t— Маркер\n  Esc\t— Отменить добавление\n\nТочки\n  V\t— Режим точек вкл/выкл\n  Delete\t— Очистить точки\n\nМышь\n  Колесо\t— Масштаб под курсором\n  Shift+колесо\t— Прокрутка влево/вправо\n  Ctrl+колесо\t— Масштаб по высоте (Y)\n  Alt+колесо\t— Сдвиг вверх/вниз (Y)\n  ЛКМ + тяга\t— Панорамирование (вкл/выкл вертикальное через Вид)\n  ЛКМ\t— Поставить точку / линию / маркер (в режиме)\n  ПКМ\t— Очистить точки\n\n  F1\t— Эта справка",
     L"LVM Viewer — просмотрщик сигналов LabVIEW (.lvm / .txt)\n\nНативное приложение Win32 + GDI/GDI+, без внешних\nзависимостей и без Qt. Время и спектр (БПФ), измерения\nс примагничиванием, направляющие линии, визуальное\nсглаживание, экспорт PNG/CSV.\n\nСборка: build_gui.ps1 (MinGW g++) или make gui.",
-    L"Открыть файл…", L"Сохранить PNG", L"Сохранить CSV", L"Переключить Время / Гц", L"Воспроизведение", L"Пауза", L"Режим измерения точек", L"Сбросить вид", L"Авто масштабирование", L"Настройки точек",
+    L"Открыть файл…", L"Сохранить PNG", L"Сохранить CSV", L"Переключить Время / Гц", L"Воспроизведение", L"Пауза", L"Режим измерения точек", L"Сбросить вид", L"Автомасштабирование", L"Настройки точек",
     L"Русский", L"English", L"Язык",
     L"Лёгкий режим",
     L"После выбора файла запрашивает временной диапазон\r\nи открывает только этот фрагмент. Каналы скрыты.",
@@ -2134,6 +2137,20 @@ LRESULT CALLBACK ChannelEditProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return CallWindowProcW(g_channel_edit_proc, hwnd, msg, wp, lp);
 }
 
+void finish_channel_rename_if_click_outside(HWND hwnd) {
+    if (!g.channel_edit) return;
+    RECT edit_rect;
+    GetWindowRect(g.channel_edit, &edit_rect);
+    MapWindowPoints(nullptr, hwnd, reinterpret_cast<LPPOINT>(&edit_rect), 2);
+    POINT click_point;
+    GetCursorPos(&click_point);
+    ScreenToClient(hwnd, &click_point);
+    if (!PtInRect(&edit_rect, click_point)) {
+        finish_channel_rename(true);
+        SetFocus(hwnd);
+    }
+}
+
 void start_channel_rename(int ci) {
     if (ci < 0 || ci >= static_cast<int>(g.channel_labels.size())) return;
     finish_channel_rename(true);
@@ -2175,7 +2192,7 @@ void rebuild_checks() {
     for (std::size_t i = 0; i < g.ds.channel_count(); ++i) {
         HWND c = CreateWindowExW(
             0, L"BUTTON", L"",
-            WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 10, 10, g.main,
+            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | BS_OWNERDRAW, 0, 0, 10, 10, g.main,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_CHAN_BASE + i)), inst, nullptr);
         SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         SendMessageW(c, BM_SETCHECK, g.visible[i] ? BST_CHECKED : BST_UNCHECKED, 0);
@@ -2183,7 +2200,7 @@ void rebuild_checks() {
 
         HWND lbl = CreateWindowExW(
             0, L"STATIC", g.channel_labels[i].c_str(),
-            WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOTIFY | SS_CENTERIMAGE,
+            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | SS_LEFT | SS_NOTIFY | SS_CENTERIMAGE,
             0, 0, 10, 10, g.main,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_CHAN_LABEL_BASE + i)), inst, nullptr);
         SendMessageW(lbl, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
@@ -2192,6 +2209,10 @@ void rebuild_checks() {
 }
 
 void hide_ui_controls() {
+    if (g.main) {
+        SetMenu(g.main, nullptr);
+        DrawMenuBar(g.main);
+    }
     for (HWND b : g.buttons) ShowWindow(b, SW_HIDE);
     for (HWND c : g.checks) ShowWindow(c, SW_HIDE);
     for (HWND c : g.check_labels) ShowWindow(c, SW_HIDE);
@@ -2202,6 +2223,10 @@ void hide_ui_controls() {
 }
 
 void show_ui_controls() {
+    if (g.main) {
+        SetMenu(g.main, g.menu);
+        DrawMenuBar(g.main);
+    }
     for (HWND b : g.buttons) ShowWindow(b, SW_SHOW);
     apply_side_panel_visibility();
     if (g.channel_edit && g.side_panel_visible && g.side_panel_tab == 0) ShowWindow(g.channel_edit, SW_SHOW);
@@ -2411,7 +2436,7 @@ void layout() {
     place(g.play, 92, 8);
     sep();
     place(g.reset, 80, 8);
-    place(g.autoy, 90, 8);
+    place(g.autoy, 156, 8);
 
     // Row 2: graph tools and settings
     x = 8;
@@ -2425,7 +2450,9 @@ void layout() {
 
     const int panel_w = side_panel_width();
     const int panel_left = cw - panel_w;
-    const int panel_x = panel_left + 12;
+    const int panel_pad_left = 12;
+    const int panel_pad_right = 16;
+    const int panel_x = panel_left + panel_pad_left;
     const int viewport_bottom = ch - kBottomBar - 6;
     const int channels_viewport_top = kTopBar + 78;
     const int points_viewport_top = kTopBar + 48;
@@ -2444,7 +2471,9 @@ void layout() {
     const int viewport_height = max(0, viewport_bottom - active_viewport_top);
     const int scroll_w = GetSystemMetrics(SM_CXVSCROLL);
     const bool need_scroll = g.side_panel_visible && !welcome_visible() && active_content_estimate > viewport_height;
-    const int content_w = max(60, panel_w - 12 - (need_scroll ? (scroll_w + 6) : 0));
+    const int content_w = max(
+        60,
+        panel_w - panel_pad_left - panel_pad_right - (need_scroll ? (scroll_w + 6) : 0));
     const bool show_channels = g.side_panel_visible && g.side_panel_tab == 0 && !welcome_visible();
     const bool show_points = g.side_panel_visible && g.side_panel_tab == 1 && !welcome_visible();
 
@@ -3372,9 +3401,9 @@ bool load_path(const std::wstring& wpath, const double* fragment_start = nullptr
     hide_loading();
     if (!ds.ok) { g.last_error = ds.error; return false; }
 
-    const std::vector<double> raw_time = ds.time;
+    const std::vector<double> raw_time = ds.raw_time.empty() ? ds.time : ds.raw_time;
     lvm::drop_duplicate_time_channels(ds, raw_time);
-    if (!load_options.use_time_window) lvm::make_monotonic(ds.time);
+    if (!load_options.use_time_window && !ds.time_rebuilt_from_headers) lvm::make_monotonic(ds.time);
 
     g.current_file_partial = load_options.use_time_window || ds.partial;
     g.ds = std::move(ds);
@@ -3695,12 +3724,6 @@ void draw_legend(HDC dc, const RECT& p) {
     for (int i = 0; i < ch_count; ++i) {
         bool vis = g.visible[i];
         COLORREF col = channel_color(i);
-        if (!vis) {
-            // Dim the color for hidden channels (average toward gray)
-            col = RGB((GetRValue(col) + 180) / 2,
-                      (GetGValue(col) + 180) / 2,
-                      (GetBValue(col) + 180) / 2);
-        }
         HBRUSH cb = CreateSolidBrush(col);
         HGDIOBJ old_b = SelectObject(dc, cb);
         HGDIOBJ old_p = SelectObject(dc, GetStockObject(NULL_PEN));
@@ -3709,20 +3732,22 @@ void draw_legend(HDC dc, const RECT& p) {
         SelectObject(dc, old_b);
         DeleteObject(cb);
 
-        // If hidden, draw a diagonal line through the swatch
-        if (!vis) {
-            HPEN line = CreatePen(PS_SOLID, 1, g_theme->text_secondary);
-            HGDIOBJ old_lp = SelectObject(dc, line);
-            MoveToEx(dc, box_x + pad, y + 6, nullptr);
-            LineTo(dc, box_x + pad + 14, y + 6 + 3);
-            SelectObject(dc, old_lp);
-            DeleteObject(line);
-        }
-
         SetTextColor(dc, vis ? g_theme->text_primary : g_theme->text_secondary);
         SetTextAlign(dc, TA_LEFT | TA_TOP);
         std::wstring nm = g.channel_labels[i];
-        TextOutW(dc, box_x + pad + 18, y, nm.c_str(), static_cast<int>(nm.size()));
+        const int text_x = box_x + pad + 18;
+        TextOutW(dc, text_x, y, nm.c_str(), static_cast<int>(nm.size()));
+        if (!vis) {
+            SIZE text_size{};
+            GetTextExtentPoint32W(dc, nm.c_str(), static_cast<int>(nm.size()), &text_size);
+            HPEN line = CreatePen(PS_SOLID, 1, g_theme->text_secondary);
+            HGDIOBJ old_lp = SelectObject(dc, line);
+            const int line_y = y + max(6, item_h / 2);
+            MoveToEx(dc, text_x, line_y, nullptr);
+            LineTo(dc, text_x + text_size.cx, line_y);
+            SelectObject(dc, old_lp);
+            DeleteObject(line);
+        }
 
         // Store hit-test rect for this item (full row, for easier clicking)
         g_legend_items.push_back({i, {box_x, y, box_x + box_w, y + item_h}});
@@ -3996,6 +4021,26 @@ void draw_catmull_rom(HDC dc, const std::vector<POINT>& pts) {
     }
 }
 
+double visible_time_gap_threshold(const std::vector<double>& time, std::size_t lo, std::size_t hi) {
+    if (hi <= lo + 1) return std::numeric_limits<double>::infinity();
+
+    std::vector<double> diffs;
+    diffs.reserve(512);
+    for (std::size_t i = lo + 1; i < hi && diffs.size() < 512; ++i) {
+        const double d = time[i] - time[i - 1];
+        if (std::isfinite(d) && d > 0.0) diffs.push_back(d);
+    }
+    if (diffs.empty()) return std::numeric_limits<double>::infinity();
+
+    std::sort(diffs.begin(), diffs.end());
+    const std::size_t mid = diffs.size() / 2;
+    double median = (diffs.size() % 2 == 0)
+        ? 0.5 * (diffs[mid - 1] + diffs[mid])
+        : diffs[mid];
+    if (!(median > 0.0) || !std::isfinite(median)) return std::numeric_limits<double>::infinity();
+    return median * 64.0;
+}
+
 void draw_time(HDC dc, const RECT& p) {
     const std::vector<double>& t = g.ds.time;
     const std::size_t n = t.size();
@@ -4054,6 +4099,7 @@ void draw_time(HDC dc, const RECT& p) {
     static std::vector<float> series;
     static std::vector<float> cmin, cmax;
     const bool sparse = (hi - lo) <= static_cast<std::size_t>(pw) * 2;
+    const double gap_threshold = visible_time_gap_threshold(t, lo, hi);
 
     for (std::size_t c = 0; c < g.ds.channel_count(); ++c) {
         if (!g.visible[c]) continue;
@@ -4079,6 +4125,10 @@ void draw_time(HDC dc, const RECT& p) {
             for (std::size_t i = lo; i < hi; ++i) {
                 const float v = series[i - lo];
                 if (std::isnan(v)) { flush(); continue; }
+                if (!run.empty() && i > lo) {
+                    const double dt = t[i] - t[i - 1];
+                    if (std::isfinite(dt) && dt > gap_threshold) flush();
+                }
                 run.push_back(POINT{mapx(t[i]), mapy(v)});
             }
             flush();
@@ -4120,7 +4170,10 @@ void draw_time(HDC dc, const RECT& p) {
                 const int ylo = mapy(cmin[cxp]);
                 MoveToEx(dc, x, ylo, nullptr);
                 LineTo(dc, x, yhi - 1);
-                if (prev_x >= 0) { MoveToEx(dc, prev_x, prev_y, nullptr); LineTo(dc, x, (yhi + ylo) / 2); }
+                if (prev_x >= 0 && x - prev_x <= 2) {
+                    MoveToEx(dc, prev_x, prev_y, nullptr);
+                    LineTo(dc, x, (yhi + ylo) / 2);
+                }
                 prev_x = x; prev_y = (yhi + ylo) / 2;
             }
         }
@@ -5373,7 +5426,7 @@ std::wstring command_name(int command) {
         case IDM_ADD_HLINE: return en ? L"Horizontal line" : L"Горизонтальная линия";
         case IDM_ADD_VLINE_EXACT: return en ? L"Vertical line (exact)" : L"Вертикальная линия (точно)";
         case IDM_ADD_HLINE_EXACT: return en ? L"Horizontal line (exact)" : L"Горизонтальная линия (точно)";
-        case IDC_AUTOY: return en ? L"Auto zoom" : L"Авто масштабирование";
+        case IDC_AUTOY: return en ? L"Auto zoom" : L"Автомасштабирование";
         case IDM_VISMOOTH: return en ? L"Smoothing" : L"Сглаживание";
         case IDM_VPAN: return en ? L"Vertical pan" : L"Вертикальное панорамирование";
         case IDM_THEME: return en ? L"Dark theme" : L"Тёмная тема";
@@ -5441,6 +5494,7 @@ struct WelcomeLayout {
     RECT hero{};
     RECT action{};
     bool stacked = false;
+    bool compact = false;
 };
 
 int rect_width(const RECT& r) {
@@ -5465,19 +5519,21 @@ WelcomeLayout compute_welcome_layout(HWND hwnd) {
     const int y0 = max(0, (client_h - content_h) / 2);
 
     layout.bounds = { x0, y0, x0 + content_w, y0 + content_h };
-    layout.stacked = (content_w < 920 || content_h < 590);
+    layout.stacked = (content_w < 760);
 
     if (layout.stacked) {
-        int hero_h = std::clamp(content_h * 52 / 100, 240, 380);
-        const int min_action_h = 390;
-        hero_h = min(hero_h, max(220, content_h - gap - min_action_h));
+        int hero_h = std::clamp(content_h * 48 / 100, 220, 340);
+        const int min_action_h = 320;
+        hero_h = min(hero_h, max(180, content_h - gap - min_action_h));
         layout.hero = { x0, y0, x0 + content_w, y0 + hero_h };
         layout.action = { x0, layout.hero.bottom + gap, x0 + content_w, y0 + content_h };
     } else {
-        const int action_w = std::clamp(content_w / 3, 300, 360);
+        const int action_w = std::clamp(content_w / 3, 320, 380);
         layout.hero = { x0, y0, x0 + content_w - action_w - gap, y0 + content_h };
         layout.action = { layout.hero.right + gap, y0, x0 + content_w, y0 + content_h };
     }
+
+    layout.compact = rect_height(layout.action) < 560 || rect_width(layout.action) < 340;
 
     return layout;
 }
@@ -5489,54 +5545,59 @@ void layout_welcome_controls(HWND hwnd) {
         if (ctl) MoveWindow(ctl, x, y, max(1, w), max(1, h), TRUE);
     };
 
-    const int hero_pad = layout.stacked ? 22 : 30;
+    const int hero_pad = layout.compact ? 20 : (layout.stacked ? 22 : 30);
     const int hx = layout.hero.left + hero_pad;
     int hy = layout.hero.top + hero_pad;
     const int hw = max(180, rect_width(layout.hero) - hero_pad * 2);
-    const int title_h = layout.stacked ? 46 : 52;
-    const int subtitle_h = 24;
-    const int version_h = 20;
-    const int intro_h = layout.stacked ? 64 : 76;
+    const int title_h = layout.compact ? 40 : (layout.stacked ? 46 : 52);
+    const int subtitle_h = layout.compact ? 22 : 24;
+    const int version_h = layout.compact ? 18 : 20;
+    const int intro_h = layout.compact ? 54 : (layout.stacked ? 64 : 76);
 
     place(IDW_TITLE, hx, hy, hw, title_h);
-    hy += title_h + 8;
+    hy += title_h + (layout.compact ? 6 : 8);
     place(IDW_SUBTITLE, hx, hy, hw, subtitle_h);
-    hy += subtitle_h + 6;
+    hy += subtitle_h + (layout.compact ? 4 : 6);
     place(IDW_VERSION, hx, hy, hw, version_h);
-    hy += version_h + 12;
+    hy += version_h + (layout.compact ? 10 : 12);
     place(IDW_INTRO, hx, hy, hw, intro_h);
-    hy += intro_h + 18;
+    hy += intro_h + (layout.compact ? 12 : 18);
 
-    const int footer_reserve = layout.stacked ? 28 : 20;
+    const int footer_reserve = layout.compact ? 18 : (layout.stacked ? 28 : 20);
     const int feature_bottom = layout.hero.bottom - hero_pad - footer_reserve;
     place(IDW_FEATURES, hx, hy, hw, max(72, feature_bottom - hy));
 
-    const int action_pad = layout.stacked ? 20 : 24;
+    const int action_pad = layout.compact ? 16 : (layout.stacked ? 20 : 24);
     const int ax = layout.action.left + action_pad;
     int ay = layout.action.top + action_pad;
     const int aw = max(180, rect_width(layout.action) - action_pad * 2);
-    const int lang_gap = 10;
-    const int button_h = 40;
-    const int button_gap = layout.stacked ? 10 : 12;
+    const int segment_gap = 10;
+    const int segment_button_h = layout.compact ? 28 : 32;
+    const int action_button_h = layout.compact ? 34 : 40;
+    const int button_gap = layout.compact ? 8 : (layout.stacked ? 10 : 12);
     place(IDW_LANG_LABEL, ax, ay, aw, 20);
-    ay += 24;
-    const int lang_w = max(80, (aw - lang_gap) / 2);
-    place(IDM_LANG_RU, ax, ay, lang_w, 32);
-    place(IDM_LANG_EN, ax + aw - lang_w, ay, lang_w, 32);
-    ay += 48;
+    ay += layout.compact ? 22 : 24;
+    const int lang_w = max(80, (aw - segment_gap) / 2);
+    place(IDM_LANG_RU, ax, ay, lang_w, segment_button_h);
+    place(IDM_LANG_EN, ax + aw - lang_w, ay, lang_w, segment_button_h);
+    ay += segment_button_h + (layout.compact ? 8 : 12);
+    place(IDW_THEME_LABEL, ax, ay, aw, 20);
+    ay += layout.compact ? 22 : 24;
+    const int theme_w = max(80, (aw - segment_gap) / 2);
+    place(IDW_THEME_LIGHT, ax, ay, theme_w, segment_button_h);
+    place(IDW_THEME_DARK, ax + aw - theme_w, ay, theme_w, segment_button_h);
+    ay += segment_button_h + (layout.compact ? 12 : 16);
     place(IDW_LIGHT_MODE, ax, ay, aw, 22);
-    ay += 28;
-    place(IDW_LIGHT_HINT, ax, ay, aw, layout.stacked ? 64 : 60);
-    ay += layout.stacked ? 74 : 70;
-    place(IDW_ACTIONS_TITLE, ax, ay, aw, 24);
-    ay += 34;
-    place(IDC_OPEN, ax, ay, aw, button_h);
-    ay += button_h + button_gap;
-    place(IDC_PTSETTINGS, ax, ay, aw, button_h);
-    ay += button_h + button_gap;
-    place(IDM_HOTKEYS, ax, ay, aw, button_h);
-    ay += button_h + button_gap;
-    place(IDW_START, ax, ay, aw, button_h);
+    ay += layout.compact ? 24 : 28;
+    place(IDW_LIGHT_HINT, ax, ay, aw, layout.compact ? 42 : (layout.stacked ? 64 : 60));
+    ay += layout.compact ? 50 : (layout.stacked ? 74 : 70);
+    place(IDW_ACTIONS_TITLE, ax, ay, aw, layout.compact ? 20 : 24);
+    ay += layout.compact ? 28 : 34;
+    place(IDC_PTSETTINGS, ax, ay, aw, action_button_h);
+    ay += action_button_h + button_gap;
+    place(IDM_HOTKEYS, ax, ay, aw, action_button_h);
+    ay += action_button_h + button_gap;
+    place(IDW_START, ax, ay, aw, action_button_h);
 }
 
 void append_hotkey_line(std::wstring& out, int command) {
@@ -5956,6 +6017,116 @@ void draw_button_with_colors(HDC dc, const RECT& r, const wchar_t* txt,
     SelectObject(dc, old_font);
 }
 
+bool is_channel_checkbox_id(int id) {
+    return id >= IDC_CHAN_BASE && id < IDC_CHAN_BASE + static_cast<int>(g.visible.size());
+}
+
+bool is_side_toggle_id(int id) {
+    return id == IDC_SIDE_PT_NUM ||
+           id == IDC_SIDE_PT_X ||
+           id == IDC_SIDE_PT_Y ||
+           id == IDC_SIDE_PT_DX ||
+           id == IDC_SIDE_PT_DY ||
+           id == IDC_SIDE_PT_INVDT ||
+           id == IDC_SIDE_PT_DIST ||
+           id == IDC_SIDE_PT_SNAP ||
+           id == IDC_SIDE_POINT_GROUP_VISIBLE;
+}
+
+bool is_settings_toggle_button_id(int id) {
+    return id == IDC_SET_LANG_RU ||
+           id == IDC_SET_LANG_EN ||
+           id == IDC_SET_HOTKEY_CTRL ||
+           id == IDC_SET_HOTKEY_SHIFT ||
+           id == IDC_SET_HOTKEY_ALT;
+}
+
+bool is_settings_checkbox_id(int id) {
+    return id == IDC_SET_LIGHT_MODE;
+}
+
+bool is_toggle_checked(HWND hwnd) {
+    return hwnd && SendMessageW(hwnd, BM_GETCHECK, 0, 0) == BST_CHECKED;
+}
+
+void set_toggle_checked(HWND hwnd, bool checked) {
+    if (!hwnd) return;
+    SendMessageW(hwnd, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
+    InvalidateRect(hwnd, nullptr, FALSE);
+}
+
+void toggle_checked_state(HWND hwnd) {
+    set_toggle_checked(hwnd, !is_toggle_checked(hwnd));
+}
+
+void draw_themed_check_control(HDC dc, const RECT& r, const wchar_t* txt,
+                               bool checked, bool pressed, bool enabled,
+                               bool radio, bool compact) {
+    HBRUSH bg = CreateSolidBrush(g_theme->bg_panel);
+    FillRect(dc, &r, bg);
+    DeleteObject(bg);
+
+    const int box_size = compact ? 14 : 16;
+    const int box_left = compact ? (r.left + ((r.right - r.left - box_size) / 2)) : (r.left + 2);
+    const int box_top = r.top + ((r.bottom - r.top - box_size) / 2);
+    RECT box = { box_left, box_top, box_left + box_size, box_top + box_size };
+
+    COLORREF fill = checked ? (pressed ? g_theme->accent_hover : g_theme->accent)
+                            : (pressed ? g_theme->btn_hover : g_theme->bg_plot);
+    COLORREF border = checked ? g_theme->accent : g_theme->btn_border;
+    COLORREF text = enabled ? g_theme->text_primary : g_theme->text_secondary;
+    if (!enabled) {
+        fill = mix_color(fill, g_theme->bg_panel, 96);
+        border = mix_color(border, g_theme->bg_panel, 96);
+    }
+
+    if (radio) {
+        HBRUSH outer = CreateSolidBrush(fill);
+        HPEN pen = CreatePen(PS_SOLID, 1, border);
+        HGDIOBJ old_brush = SelectObject(dc, outer);
+        HGDIOBJ old_pen = SelectObject(dc, pen);
+        Ellipse(dc, box.left, box.top, box.right, box.bottom);
+        SelectObject(dc, old_pen);
+        SelectObject(dc, old_brush);
+        DeleteObject(pen);
+        DeleteObject(outer);
+        if (checked) {
+            RECT dot = { box.left + 4, box.top + 4, box.right - 4, box.bottom - 4 };
+            HBRUSH dot_brush = CreateSolidBrush(RGB(255, 255, 255));
+            HGDIOBJ old_dot = SelectObject(dc, dot_brush);
+            HPEN dot_pen = CreatePen(PS_SOLID, 1, RGB(255, 255, 255));
+            HGDIOBJ old_dot_pen = SelectObject(dc, dot_pen);
+            Ellipse(dc, dot.left, dot.top, dot.right, dot.bottom);
+            SelectObject(dc, old_dot_pen);
+            SelectObject(dc, old_dot);
+            DeleteObject(dot_pen);
+            DeleteObject(dot_brush);
+        }
+    } else {
+        fill_rounded_rect(dc, box, fill, border, 4);
+        if (checked) {
+            HPEN check_pen = CreatePen(PS_SOLID, 2, RGB(255, 255, 255));
+            HGDIOBJ old_pen = SelectObject(dc, check_pen);
+            MoveToEx(dc, box.left + 3, box.top + 8, nullptr);
+            LineTo(dc, box.left + 6, box.bottom - 4);
+            LineTo(dc, box.right - 3, box.top + 4);
+            SelectObject(dc, old_pen);
+            DeleteObject(check_pen);
+        }
+    }
+
+    if (!compact && txt && txt[0]) {
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, text);
+        HFONT font = g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+        HGDIOBJ old_font = SelectObject(dc, font);
+        RECT text_rect = { box.right + 8, r.top, r.right - 2, r.bottom };
+        if (pressed) OffsetRect(&text_rect, 0, 1);
+        DrawTextW(dc, txt, -1, &text_rect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+        SelectObject(dc, old_font);
+    }
+}
+
 void draw_welcome_action_button(HDC dc, const RECT& r, const wchar_t* txt,
                                 bool pressed, bool primary, bool outlined) {
     COLORREF bg_col = g_theme->btn_bg;
@@ -6018,6 +6189,11 @@ void redraw_button(HWND btn) {
     RedrawWindow(btn, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
 }
 
+void redraw_window_with_children(HWND hwnd) {
+    if (!hwnd || !IsWindow(hwnd)) return;
+    RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN);
+}
+
 void redraw_toolbar_buttons() {
     for (HWND btn : g.buttons) redraw_button(btn);
 }
@@ -6035,6 +6211,22 @@ void refresh_theme_windows() {
     redraw(g.channel_edit);
     for (HWND h : g.checks) redraw(h);
     for (HWND h : g.check_labels) redraw(h);
+}
+
+void apply_theme_choice(const Theme* theme) {
+    if (!theme || g_theme == theme) return;
+    g_theme = theme;
+    save_app_settings();
+    update_theme_brushes();
+    if (g.menu) {
+        MENUINFO mi = { sizeof(mi) };
+        mi.fMask = MIM_BACKGROUND | MIM_APPLYTOSUBMENUS;
+        mi.hbrBack = CreateSolidBrush(g_theme->bg_toolbar);
+        SetMenuInfo(g.menu, &mi);
+    }
+    sync_menu();
+    if (g.settings_wnd) refresh_settings_controls();
+    refresh_theme_windows();
 }
 
 void draw_themed_button(HDC dc, const RECT& r, const wchar_t* txt, bool pressed, bool active, bool hover) {
@@ -6143,7 +6335,7 @@ HMENU make_menu() {
         std::wstring reset_text = menu_text(en ? L"Reset view" : L"Сбросить вид", IDC_RESET);
         std::wstring start_text = menu_text(en ? L"Go to start" : L"В начало", IDC_GOTO_START);
         std::wstring end_text = menu_text(en ? L"Go to end" : L"В конец", IDC_GOTO_END);
-        std::wstring autoy_text = menu_text(en ? L"Auto zoom" : L"Авто масштабирование", IDC_AUTOY);
+        std::wstring autoy_text = menu_text(en ? L"Auto zoom" : L"Автомасштабирование", IDC_AUTOY);
         std::wstring smooth_text = menu_text(en ? L"Smoothing" : L"Сглаживание", IDM_VISMOOTH);
         std::wstring vpan_text = menu_text(en ? L"Vertical pan" : L"Вертикальное панорамирование", IDM_VPAN);
         std::wstring play_text = menu_text(L"Play / Pause", IDC_PLAY);
@@ -6185,11 +6377,7 @@ HMENU make_menu() {
         append_menu_popup_owner_draw(bar, tools, en ? L"Tools" : L"Инструменты");
 
         HMENU settings = CreatePopupMenu();
-        HMENU lang = CreatePopupMenu();
-        append_menu_item_owner_draw(lang, IDM_LANG_RU, g_str->lang_ru);
-        append_menu_item_owner_draw(lang, IDM_LANG_EN, g_str->lang_en);
         append_menu_item_owner_draw(settings, IDC_PTSETTINGS, en ? L"General settings…" : L"Общие настройки…");
-        append_submenu_popup_owner_draw(settings, lang, en ? L"Language" : L"Язык");
         append_menu_popup_owner_draw(bar, settings, en ? L"Settings" : L"Настройки");
 
         HMENU help = CreatePopupMenu();
@@ -6234,7 +6422,7 @@ HMENU make_menu() {
         std::wstring reset_text = menu_text(en ? L"Reset view" : L"Сбросить вид", IDC_RESET);
         std::wstring start_text = menu_text(en ? L"Go to start" : L"В начало", IDC_GOTO_START);
         std::wstring end_text = menu_text(en ? L"Go to end" : L"В конец", IDC_GOTO_END);
-        std::wstring autoy_text = menu_text(en ? L"Auto zoom" : L"Авто масштабирование", IDC_AUTOY);
+        std::wstring autoy_text = menu_text(en ? L"Auto zoom" : L"Автомасштабирование", IDC_AUTOY);
         std::wstring smooth_text = menu_text(en ? L"Smoothing" : L"Сглаживание", IDM_VISMOOTH);
         std::wstring vpan_text = menu_text(en ? L"Vertical pan" : L"Вертикальное панорамирование", IDM_VPAN);
         std::wstring play_text = menu_text(L"Play / Pause", IDC_PLAY);
@@ -6313,7 +6501,7 @@ HMENU make_menu() {
     append_menu_item_owner_draw(view, IDC_GOTO_START, L"В начало\tCtrl+Home");
     append_menu_item_owner_draw(view, IDC_GOTO_END, L"В конец\tCtrl+End");
     AppendMenuW(view, MF_SEPARATOR, 0, nullptr);
-    append_menu_item_owner_draw(view, IDC_AUTOY, (g_str == &kEn) ? L"Auto zoom" : L"Авто масштабирование");
+    append_menu_item_owner_draw(view, IDC_AUTOY, (g_str == &kEn) ? L"Auto zoom" : L"Автомасштабирование");
     append_menu_item_owner_draw(view, IDM_VISMOOTH, L"Сглаживание\tC");
     append_menu_item_owner_draw(view, IDM_VPAN, L"Вертикальное панорамирование\tP");
     append_menu_item_owner_draw(view, IDC_PLAY, L"Play / Pause\tПробел");
@@ -6555,7 +6743,7 @@ void rebuild_menu_bar() {
     if (g.menu) DestroyMenu(g.menu);
     g_menu_text_storage.clear();
     g.menu = make_menu();
-    SetMenu(g.main, g.menu);
+    SetMenu(g.main, welcome_visible() ? nullptr : g.menu);
     MENUINFO mi = { sizeof(mi) };
     mi.fMask = MIM_BACKGROUND | MIM_APPLYTOSUBMENUS;
     mi.hbrBack = CreateSolidBrush(g_theme->bg_toolbar);
@@ -6574,7 +6762,7 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                        id == IDC_SET_GROUP_HOTKEYS;
             };
             auto mk = [&](const wchar_t* cls, const wchar_t* text, DWORD style, int x, int y, int w, int h, int id) {
-                HWND c = CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | style, x, y, w, h, hwnd,
+                HWND c = CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | style, x, y, w, h, hwnd,
                     id ? reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)) : nullptr, inst, nullptr);
                 if (c) SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
                 if (c && is_settings_group(id)) EnableWindow(c, FALSE);
@@ -6582,16 +6770,16 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             };
             const bool en = (g_str == &kEn);
             mk(L"BUTTON", en ? L"General" : L"Общие", BS_OWNERDRAW, 12, 10, 510, 136, IDC_SET_GROUP_GENERAL);
-            mk(L"BUTTON", g_str->lang_ru, BS_AUTORADIOBUTTON, 28, 36, 110, 22, IDC_SET_LANG_RU);
-            mk(L"BUTTON", g_str->lang_en, BS_AUTORADIOBUTTON, 144, 36, 110, 22, IDC_SET_LANG_EN);
-            mk(L"BUTTON", g_str->light_mode, BS_AUTOCHECKBOX, 28, 71, 180, 26, IDC_SET_LIGHT_MODE);
+            mk(L"BUTTON", g_str->lang_ru, BS_OWNERDRAW, 28, 36, 110, 22, IDC_SET_LANG_RU);
+            mk(L"BUTTON", g_str->lang_en, BS_OWNERDRAW, 144, 36, 110, 22, IDC_SET_LANG_EN);
+            mk(L"BUTTON", g_str->light_mode, BS_OWNERDRAW, 28, 71, 180, 26, IDC_SET_LIGHT_MODE);
             mk(L"STATIC", g_str->light_mode_hint, SS_LEFT | SS_NOPREFIX, 28, 94, 468, 54, IDC_SET_LIGHT_HINT);
 
             mk(L"BUTTON", en ? L"Hotkeys" : L"Горячие клавиши", BS_OWNERDRAW, 12, 156, 510, 188, IDC_SET_GROUP_HOTKEYS);
             mk(L"LISTBOX", L"", LBS_NOTIFY | WS_VSCROLL | WS_BORDER, 24, 180, 240, 150, IDC_SET_HOTKEY_LIST);
-            mk(L"BUTTON", L"Ctrl", BS_AUTOCHECKBOX, 284, 188, 70, 22, IDC_SET_HOTKEY_CTRL);
-            mk(L"BUTTON", L"Shift", BS_AUTOCHECKBOX, 356, 188, 70, 22, IDC_SET_HOTKEY_SHIFT);
-            mk(L"BUTTON", L"Alt", BS_AUTOCHECKBOX, 428, 188, 70, 22, IDC_SET_HOTKEY_ALT);
+            mk(L"BUTTON", L"Ctrl", BS_OWNERDRAW, 284, 188, 70, 22, IDC_SET_HOTKEY_CTRL);
+            mk(L"BUTTON", L"Shift", BS_OWNERDRAW, 356, 188, 70, 22, IDC_SET_HOTKEY_SHIFT);
+            mk(L"BUTTON", L"Alt", BS_OWNERDRAW, 428, 188, 70, 22, IDC_SET_HOTKEY_ALT);
             mk(L"STATIC", en ? L"Key:" : L"Клавиша:", SS_LEFT, 284, 220, 80, 20, 0);
             HWND combo = mk(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_BORDER, 284, 240, 214, 260, IDC_SET_HOTKEY_KEY);
             populate_hotkey_key_combo(combo);
@@ -6617,10 +6805,16 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     break;
                 case IDC_SET_LIGHT_MODE:
                     if (HIWORD(wp) == BN_CLICKED) {
+                        toggle_checked_state(ctl);
                         g.light_mode = checked();
                         save_runtime_settings();
                         refresh_settings_controls();
                     }
+                    return 0;
+                case IDC_SET_HOTKEY_CTRL:
+                case IDC_SET_HOTKEY_SHIFT:
+                case IDC_SET_HOTKEY_ALT:
+                    if (HIWORD(wp) == BN_CLICKED) toggle_checked_state(ctl);
                     return 0;
                 case IDC_SET_HOTKEY_LIST:
                     if (HIWORD(wp) == LBN_SELCHANGE) load_selected_hotkey_controls(hwnd);
@@ -6693,6 +6887,20 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             wchar_t txt[128];
             GetWindowTextW(dis->hwndItem, txt, 128);
             bool pressed = (dis->itemState & ODS_SELECTED) != 0;
+            if (is_settings_toggle_button_id(ctl_id)) {
+                bool active = false;
+                if (ctl_id == IDC_SET_LANG_RU) active = g_str == &kRu;
+                else if (ctl_id == IDC_SET_LANG_EN) active = g_str == &kEn;
+                else active = is_toggle_checked(dis->hwndItem);
+                draw_themed_button(dis->hDC, dis->rcItem, txt, pressed, active, false);
+                return TRUE;
+            }
+            if (is_settings_checkbox_id(ctl_id)) {
+                const bool enabled = IsWindowEnabled(dis->hwndItem) != FALSE;
+                draw_themed_check_control(dis->hDC, dis->rcItem, txt,
+                    is_toggle_checked(dis->hwndItem), pressed, enabled, false, false);
+                return TRUE;
+            }
             draw_themed_button(dis->hDC, dis->rcItem, txt, pressed, false, false);
             return TRUE;
         }
@@ -6767,7 +6975,7 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             auto mkstatic = [&](const wchar_t* text, int id, HFONT use_font) {
                 HWND ctl = CreateWindowExW(
                     0, L"STATIC", text,
-                    WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX,
+                    WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | SS_LEFT | SS_NOPREFIX,
                     0, 0, 10, 10, hwnd,
                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), inst, nullptr);
                 SendMessageW(ctl, WM_SETFONT, reinterpret_cast<WPARAM>(use_font ? use_font : font), TRUE);
@@ -6776,7 +6984,7 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             auto mkbtn = [&](const wchar_t* text, int id) {
                 HWND ctl = CreateWindowExW(
                     0, L"BUTTON", text,
-                    WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+                    WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | BS_OWNERDRAW,
                     0, 0, 10, 10, hwnd,
                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), inst, nullptr);
                 SendMessageW(ctl, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
@@ -6791,16 +6999,18 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             mkstatic(g_str->m_lang, IDW_LANG_LABEL, g.bold_font ? g.bold_font : font);
             mkbtn(g_str->lang_ru, IDM_LANG_RU);
             mkbtn(g_str->lang_en, IDM_LANG_EN);
+            mkstatic((g_str == &kEn) ? L"Theme" : L"Тема", IDW_THEME_LABEL, g.bold_font ? g.bold_font : font);
+            mkbtn(g_str->theme_light, IDW_THEME_LIGHT);
+            mkbtn(g_str->theme_dark, IDW_THEME_DARK);
             HWND light_mode = CreateWindowExW(
                 0, L"BUTTON", g_str->light_mode,
-                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+                WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | BS_AUTOCHECKBOX,
                 0, 0, 10, 10, hwnd,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDW_LIGHT_MODE)), inst, nullptr);
             SendMessageW(light_mode, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
             SendMessageW(light_mode, BM_SETCHECK, g.light_mode ? BST_CHECKED : BST_UNCHECKED, 0);
             mkstatic(g_str->light_mode_hint, IDW_LIGHT_HINT, font);
             mkstatic(welcome_actions_title_text(), IDW_ACTIONS_TITLE, g.bold_font ? g.bold_font : font);
-            mkbtn(g_str->welcome_btn_open, IDC_OPEN);
             mkbtn(settings_button_text(), IDC_PTSETTINGS);
             mkbtn(g_str->welcome_btn_hotkeys, IDM_HOTKEYS);
             mkbtn(g_str->welcome_btn_start, IDW_START);
@@ -6877,6 +7087,8 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     save_runtime_settings();
                     if (g.settings_wnd) refresh_settings_controls();
                     return 0;
+                case IDW_THEME_LIGHT: apply_theme_choice(&kLightTheme); return 0;
+                case IDW_THEME_DARK: apply_theme_choice(&kDarkTheme); return 0;
                 case IDM_LANG_RU: if (g_str != &kRu) { g_str = &kRu; save_runtime_settings(); rebuild_ui(); } return 0;
                 case IDM_LANG_EN: if (g_str != &kEn) { g_str = &kEn; save_runtime_settings(); rebuild_ui(); } return 0;
             }
@@ -6889,8 +7101,11 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             bool pressed = (dis->itemState & ODS_SELECTED) != 0;
             int ctl_id = GetDlgCtrlID(dis->hwndItem);
             bool is_lang_button = (ctl_id == IDM_LANG_RU || ctl_id == IDM_LANG_EN);
-            bool active = is_lang_button &&
-                ((ctl_id == IDM_LANG_RU && g_str == &kRu) || (ctl_id == IDM_LANG_EN && g_str == &kEn));
+            bool is_theme_button = (ctl_id == IDW_THEME_LIGHT || ctl_id == IDW_THEME_DARK);
+            bool active = (is_lang_button &&
+                ((ctl_id == IDM_LANG_RU && g_str == &kRu) || (ctl_id == IDM_LANG_EN && g_str == &kEn))) ||
+                (is_theme_button &&
+                ((ctl_id == IDW_THEME_LIGHT && g_theme == &kLightTheme) || (ctl_id == IDW_THEME_DARK && g_theme == &kDarkTheme)));
             wchar_t txt[128]{};
             GetWindowTextW(dis->hwndItem, txt, 128);
 
@@ -6915,7 +7130,7 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             int ctl_id = GetDlgCtrlID(reinterpret_cast<HWND>(lp));
             if (ctl_id == IDW_SUBTITLE || ctl_id == IDW_VERSION || ctl_id == IDW_LIGHT_HINT) {
                 SetTextColor(dc, g_theme->text_secondary);
-            } else if (ctl_id == IDW_LANG_LABEL || ctl_id == IDW_ACTIONS_TITLE) {
+            } else if (ctl_id == IDW_LANG_LABEL || ctl_id == IDW_THEME_LABEL || ctl_id == IDW_ACTIONS_TITLE) {
                 SetTextColor(dc, g_theme->accent);
             } else {
                 SetTextColor(dc, g_theme->text_primary);
@@ -7049,7 +7264,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SetMenuInfo(g.menu, &mi);
 
             auto mk = [&](const wchar_t* text, int id, DWORD extra, bool in_toolbar = true) {
-                HWND b = CreateWindowExW(0, L"BUTTON", text, WS_CHILD | WS_VISIBLE | BS_OWNERDRAW | extra,
+                HWND b = CreateWindowExW(0, L"BUTTON", text, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | BS_OWNERDRAW | extra,
                                          0, 0, 10, 10, hwnd,
                                          reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), inst, nullptr);
                 SendMessageW(b, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
@@ -7080,7 +7295,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 return b;
             };
             auto mk_panel_ctl = [&](const wchar_t* cls, const wchar_t* text, DWORD style, int id, std::vector<HWND>& bucket) {
-                HWND c = CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | style,
+                HWND c = CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | style,
                                          0, 0, 10, 10, hwnd,
                                          reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), inst, nullptr);
                 if (c) {
@@ -7094,7 +7309,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g.side_tab_points = mk(side_tab_points_text(), IDC_SIDE_TAB_POINTS, 0);
             g.side_scrollbar = CreateWindowExW(
                 0, L"SCROLLBAR", nullptr,
-                WS_CHILD | SBS_VERT,
+                WS_CHILD | WS_CLIPSIBLINGS | SBS_VERT,
                 0, 0, 10, 10, hwnd,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_CHAN_BASE - 1)), inst, nullptr);
             g.side_channel_hint = mk_panel_ctl(L"STATIC", side_channel_hint_text(),
@@ -7123,13 +7338,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 {IDC_SIDE_PT_SNAP, side_pt_snap_text(), g.snap_to_data},
             };
             for (const auto& seed : point_toggle_seeds) {
-                HWND c = mk_panel_ctl(L"BUTTON", seed.text, BS_AUTOCHECKBOX, seed.id, g.side_point_controls);
+                HWND c = mk_panel_ctl(L"BUTTON", seed.text, BS_OWNERDRAW, seed.id, g.side_point_controls);
                 if (c) SendMessageW(c, BM_SETCHECK, seed.on ? BST_CHECKED : BST_UNCHECKED, 0);
             }
             g.side_point_color_current = mk_panel_btn(point_current_color_button_text(), IDC_SIDE_POINT_COLOR_CURRENT, g.side_point_controls);
             g.side_point_label_groups = mk_panel_ctl(L"STATIC", point_group_list_title(), SS_LEFT, 0, g.side_point_controls);
             g.side_point_group_list = mk_panel_ctl(L"LISTBOX", L"", LBS_NOTIFY | WS_VSCROLL | WS_BORDER, IDC_SIDE_POINT_GROUP_LIST, g.side_point_controls);
-            g.side_point_group_visible = mk_panel_ctl(L"BUTTON", point_group_visible_text(), BS_AUTOCHECKBOX, IDC_SIDE_POINT_GROUP_VISIBLE, g.side_point_controls);
+            g.side_point_group_visible = mk_panel_ctl(L"BUTTON", point_group_visible_text(), BS_OWNERDRAW, IDC_SIDE_POINT_GROUP_VISIBLE, g.side_point_controls);
             g.side_point_group_color = mk_panel_btn(point_selected_group_color_button_text(), IDC_SIDE_POINT_GROUP_COLOR, g.side_point_controls);
             g.side_point_group_new = mk_panel_btn(point_group_new_button_text(), IDC_SIDE_POINT_GROUP_NEW, g.side_point_controls);
             g.side_point_group_delete = mk_panel_btn(side_point_group_delete_text(), IDC_SIDE_POINT_GROUP_DELETE, g.side_point_controls);
@@ -7157,10 +7372,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 RECT rc;
                 GetClientRect(hwnd, &rc);
                 SetWindowPos(g.welcome_wnd, HWND_TOP, 0, 0, rc.right, rc.bottom, SWP_SHOWWINDOW);
-                RedrawWindow(g.welcome_wnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN);
+                redraw_window_with_children(g.welcome_wnd);
                 return 0;
             }
-            InvalidateRect(hwnd, nullptr, TRUE);
+            redraw_window_with_children(hwnd);
             return 0;
         case WM_GETMINMAXINFO: {
             MINMAXINFO* m = reinterpret_cast<MINMAXINFO*>(lp);
@@ -7170,6 +7385,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case WM_ERASEBKGND:
             return 1;
+        case WM_PARENTNOTIFY:
+            if (LOWORD(wp) == WM_LBUTTONDOWN) {
+                finish_channel_rename_if_click_outside(hwnd);
+            }
+            break;
         case WM_CTLCOLORBTN: {
             HDC dc = reinterpret_cast<HDC>(wp);
             SetBkMode(dc, TRANSPARENT);
@@ -7219,6 +7439,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             HWND btn = dis->hwndItem;
             if (!btn) break;
             HDC dc = dis->hDC;
+            const int ctl_id = GetDlgCtrlID(btn);
+            if (is_channel_checkbox_id(ctl_id) || is_side_toggle_id(ctl_id)) {
+                wchar_t txt[128]{};
+                GetWindowTextW(btn, txt, 128);
+                const bool pressed = (dis->itemState & ODS_SELECTED) != 0;
+                const bool enabled = IsWindowEnabled(btn) != FALSE;
+                const bool compact = is_channel_checkbox_id(ctl_id);
+                draw_themed_check_control(dc, dis->rcItem, txt,
+                    is_toggle_checked(btn), pressed, enabled, false, compact);
+                return TRUE;
+            }
             RECT r = dis->rcItem;
             bool pressed = (dis->itemState & ODS_SELECTED) != 0;
             bool active = false;
@@ -7493,18 +7724,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     set_status();
                     return 0;
                 case IDM_THEME:
-                    g_theme = (g_theme == &kLightTheme) ? &kDarkTheme : &kLightTheme;
-                    save_app_settings();
-                    update_theme_brushes();
-                    {
-                        MENUINFO mi = { sizeof(mi) };
-                        mi.fMask = MIM_BACKGROUND | MIM_APPLYTOSUBMENUS;
-                        mi.hbrBack = CreateSolidBrush(g_theme->bg_toolbar);
-                        SetMenuInfo(g.menu, &mi);
-                    }
-                    sync_menu();
-                    if (g.settings_wnd) refresh_settings_controls();
-                    refresh_theme_windows();
+                    apply_theme_choice((g_theme == &kLightTheme) ? &kDarkTheme : &kLightTheme);
                     return 0;
                 case IDM_ADD_VLINE:
                     if (!has_data()) { MessageBoxW(hwnd, g_str->msg_openfirst, g_str->msg_nodata, MB_ICONINFORMATION); return 0; }
@@ -7655,6 +7875,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     const int index = side_selected_point_group();
                     if (index >= 0 && index < static_cast<int>(g.point_groups.size())) {
                         const SettingsSnapshot before = capture_settings_snapshot();
+                        toggle_checked_state(g.side_point_group_visible);
                         const bool checked = SendMessageW(g.side_point_group_visible, BM_GETCHECK, 0, 0) == BST_CHECKED;
                         g.point_groups[static_cast<std::size_t>(index)].visible = checked;
                         record_settings_change(before);
@@ -7761,6 +7982,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 case IDC_SIDE_PT_DIST:
                 case IDC_SIDE_PT_SNAP: {
                     const SettingsSnapshot before = capture_settings_snapshot();
+                    toggle_checked_state(GetDlgItem(hwnd, id));
                     auto checked = [&](int ctl_id) {
                         return SendMessageW(GetDlgItem(hwnd, ctl_id), BM_GETCHECK, 0, 0) == BST_CHECKED;
                     };
@@ -7784,6 +8006,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 const int ci = id - IDC_CHAN_BASE;
                 const SettingsSnapshot before = capture_settings_snapshot();
                 g.side_selected_channel = ci;
+                toggle_checked_state(g.checks[ci]);
                 g.visible[ci] = (SendMessageW(g.checks[ci], BM_GETCHECK, 0, 0) == BST_CHECKED);
                 record_settings_change(before);
                 load_side_transform_controls();
@@ -7893,6 +8116,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         case WM_LBUTTONDOWN: {
+            finish_channel_rename_if_click_outside(hwnd);
             if (!has_data()) return 0;
             const RECT p = plot_rect();
             const int mx = GET_X_LPARAM(lp), my = GET_Y_LPARAM(lp);
@@ -8249,6 +8473,17 @@ bool should_bypass_accelerators() {
     if (!focus) return false;
     if (g.channel_edit && (focus == g.channel_edit || IsChild(g.channel_edit, focus) != FALSE)) return true;
     if (g.settings_wnd && (focus == g.settings_wnd || IsChild(g.settings_wnd, focus) != FALSE)) return true;
+    wchar_t cls[64]{};
+    for (HWND h = focus; h; h = GetParent(h)) {
+        GetClassNameW(h, cls, 64);
+        if (lstrcmpiW(cls, L"EDIT") == 0 ||
+            lstrcmpiW(cls, L"COMBOBOX") == 0 ||
+            lstrcmpiW(cls, L"ComboBoxEx32") == 0 ||
+            wcsstr(cls, L"RICHEDIT") == cls) {
+            return true;
+        }
+        if (h == g.main) break;
+    }
     return false;
 }
 

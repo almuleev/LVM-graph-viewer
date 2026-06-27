@@ -2,8 +2,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <ctime>
 #include <cstdlib>
 #include <fstream>
+#include <limits>
+#include <sstream>
 #include <unordered_set>
 
 namespace lvm {
@@ -32,12 +35,21 @@ bool starts_with(const std::string& s, const char* prefix) {
     return s.rfind(prefix, 0) == 0;
 }
 
+std::string first_cell(const std::string& line) {
+    const auto tab = line.find('\t');
+    return strip(tab == std::string::npos ? line : line.substr(0, tab));
+}
+
+std::string second_cell(const std::string& line) {
+    const auto first_tab = line.find('\t');
+    if (first_tab == std::string::npos) return "";
+    const auto second_tab = line.find('\t', first_tab + 1);
+    return strip(line.substr(first_tab + 1, second_tab == std::string::npos ? std::string::npos : second_tab - first_tab - 1));
+}
+
 // First tab-delimited cell, stripped (Python: line.partition("\t")[0].strip()).
 bool is_metadata_line(const std::string& line) {
-    const auto tab = line.find('\t');
-    const std::string first_cell =
-        strip(tab == std::string::npos ? line : line.substr(0, tab));
-    return metadata_keys().count(first_cell) != 0;
+    return metadata_keys().count(first_cell(line)) != 0;
 }
 
 // Parse a single cell to double, requiring the whole token to be numeric
@@ -51,6 +63,109 @@ double parse_cell(const std::string& cell, bool& is_numeric) {
     if (end == begin || *end != '\0') return std::nan("");
     is_numeric = true;
     return value;
+}
+
+struct PendingSectionTime {
+    bool have_date = false;
+    bool have_time = false;
+    bool have_x0 = false;
+    std::string date_text;
+    std::string time_text;
+    double x0 = 0.0;
+
+    void reset() {
+        have_date = false;
+        have_time = false;
+        have_x0 = false;
+        date_text.clear();
+        time_text.clear();
+        x0 = 0.0;
+    }
+};
+
+struct ActiveSectionTime {
+    bool valid = false;
+    double offset_seconds = 0.0;
+    double x0 = 0.0;
+};
+
+bool parse_labview_datetime(const std::string& date_text, const std::string& time_text, double& out_seconds) {
+    int year = 0, month = 0, day = 0;
+    if (std::sscanf(date_text.c_str(), "%d/%d/%d", &year, &month, &day) != 3) return false;
+
+    std::string normalized_time = time_text;
+    for (char& ch : normalized_time) {
+        if (ch == ',') ch = '.';
+    }
+
+    int hour = 0, minute = 0;
+    double seconds = 0.0;
+    if (std::sscanf(normalized_time.c_str(), "%d:%d:%lf", &hour, &minute, &seconds) != 3) return false;
+
+    const int whole_seconds = static_cast<int>(std::floor(seconds));
+    const double fractional_seconds = seconds - static_cast<double>(whole_seconds);
+
+    std::tm tm_value{};
+    tm_value.tm_year = year - 1900;
+    tm_value.tm_mon = month - 1;
+    tm_value.tm_mday = day;
+    tm_value.tm_hour = hour;
+    tm_value.tm_min = minute;
+    tm_value.tm_sec = whole_seconds;
+    tm_value.tm_isdst = -1;
+    const std::time_t base = std::mktime(&tm_value);
+    if (base == static_cast<std::time_t>(-1)) return false;
+
+    out_seconds = static_cast<double>(base) + fractional_seconds;
+    return true;
+}
+
+void update_section_metadata(const std::string& line, PendingSectionTime& pending) {
+    const std::string key = first_cell(line);
+    const std::string value = second_cell(line);
+    if (value.empty()) return;
+
+    if (key == "Date") {
+        pending.have_date = true;
+        pending.date_text = value;
+        return;
+    }
+    if (key == "Time") {
+        pending.have_time = true;
+        pending.time_text = value;
+        return;
+    }
+    if (key == "X0") {
+        bool is_numeric = false;
+        std::string normalized = value;
+        for (char& ch : normalized) {
+            if (ch == ',') ch = '.';
+        }
+        const double parsed = parse_cell(normalized, is_numeric);
+        if (is_numeric && std::isfinite(parsed)) {
+            pending.have_x0 = true;
+            pending.x0 = parsed;
+        }
+    }
+}
+
+void activate_section_time(const PendingSectionTime& pending,
+                           bool& have_anchor,
+                           double& anchor_seconds,
+                           ActiveSectionTime& active) {
+    active.valid = false;
+    if (!pending.have_date || !pending.have_time || !pending.have_x0) return;
+
+    double absolute_seconds = 0.0;
+    if (!parse_labview_datetime(pending.date_text, pending.time_text, absolute_seconds)) return;
+    if (!have_anchor) {
+        have_anchor = true;
+        anchor_seconds = absolute_seconds;
+    }
+
+    active.valid = true;
+    active.offset_seconds = absolute_seconds - anchor_seconds;
+    active.x0 = pending.x0;
 }
 
 }  // namespace
@@ -73,13 +188,25 @@ bool scan_time_bounds(const std::string& path, double& out_start, double& out_en
     double prev_adjusted_time = 0.0;
     double time_offset = 0.0;
     double fallback_step = 1e-6;
+    bool have_section_anchor = false;
+    double section_anchor_seconds = 0.0;
+    PendingSectionTime pending_section{};
+    ActiveSectionTime active_section{};
 
     std::string raw_line;
     while (std::getline(in, raw_line)) {
         const std::string line = strip(raw_line);
         if (line.empty()) continue;
-        if (starts_with(line, "***End_of_Header***")) continue;
-        if (starts_with(line, "***") || is_metadata_line(line)) continue;
+        if (starts_with(line, "***End_of_Header***")) {
+            activate_section_time(pending_section, have_section_anchor, section_anchor_seconds, active_section);
+            pending_section.reset();
+            continue;
+        }
+        if (starts_with(line, "***")) continue;
+        if (is_metadata_line(line)) {
+            update_section_metadata(line, pending_section);
+            continue;
+        }
 
         std::vector<double> parsed;
         int numeric_count = 0;
@@ -102,7 +229,9 @@ bool scan_time_bounds(const std::string& path, double& out_start, double& out_en
 
         const double raw_time = parsed[0];
         double adjusted_time = raw_time;
-        if (have_time) {
+        if (active_section.valid) {
+            adjusted_time = active_section.offset_seconds + (raw_time - active_section.x0);
+        } else if (have_time) {
             const double diff = raw_time - prev_raw_time;
             if (diff > 0.0) fallback_step = diff;
             adjusted_time = raw_time + time_offset;
@@ -114,6 +243,7 @@ bool scan_time_bounds(const std::string& path, double& out_start, double& out_en
             first_time = raw_time;
         }
 
+        if (!have_time) first_time = adjusted_time;
         have_time = true;
         prev_raw_time = raw_time;
         prev_adjusted_time = adjusted_time;
@@ -143,6 +273,7 @@ Dataset read_lvm_file(const std::string& path, const LoadOptions& options, bool 
 
     std::vector<std::vector<double>> columns;
     std::vector<char> column_has_value;  // any non-NaN seen in this column
+    std::vector<double> raw_time_rows;
     long long row_count = 0;
 
     int header_count = 0;
@@ -156,6 +287,11 @@ Dataset read_lvm_file(const std::string& path, const LoadOptions& options, bool 
     double prev_adjusted_time = 0.0;
     double time_offset = 0.0;
     double fallback_step = 1e-6;
+    bool have_section_anchor = false;
+    double section_anchor_seconds = 0.0;
+    PendingSectionTime pending_section{};
+    ActiveSectionTime active_section{};
+    bool used_header_time_rebuild = false;
     for (; std::getline(in, raw_line); ++line_index) {
         const std::string line = strip(raw_line);
         if (line.empty()) continue;
@@ -163,9 +299,15 @@ Dataset read_lvm_file(const std::string& path, const LoadOptions& options, bool 
         if (starts_with(line, "***End_of_Header***")) {
             ++header_count;
             section_has_data = false;
+            activate_section_time(pending_section, have_section_anchor, section_anchor_seconds, active_section);
+            pending_section.reset();
             continue;
         }
-        if (starts_with(line, "***") || is_metadata_line(line)) {
+        if (starts_with(line, "***")) {
+            continue;
+        }
+        if (is_metadata_line(line)) {
+            update_section_metadata(line, pending_section);
             continue;
         }
 
@@ -194,19 +336,30 @@ Dataset read_lvm_file(const std::string& path, const LoadOptions& options, bool 
         const int part_count = static_cast<int>(parsed.size());
         if (numeric_count < 2) continue;
 
+        const double raw_time = parsed.empty() ? std::nan("") : parsed[0];
+        const bool have_raw_time = !std::isnan(raw_time);
+        bool used_header_time = false;
+        if (have_raw_time && active_section.valid) {
+            parsed[0] = active_section.offset_seconds + (raw_time - active_section.x0);
+            used_header_time = true;
+            used_header_time_rebuild = true;
+        }
+
         bool keep_row = true;
         if (options.use_time_window) {
-            const double raw_time = parsed.empty() ? std::nan("") : parsed[0];
-            if (std::isnan(raw_time)) continue;
+            if (!have_raw_time) continue;
 
-            double adjusted_time = raw_time;
-            if (have_time_state) {
-                const double diff = raw_time - prev_raw_time;
-                if (diff > 0.0) fallback_step = diff;
-                adjusted_time = raw_time + time_offset;
-                if (adjusted_time <= prev_adjusted_time) {
-                    time_offset = prev_adjusted_time + fallback_step - raw_time;
+            double adjusted_time = parsed[0];
+            if (!used_header_time) {
+                adjusted_time = raw_time;
+                if (have_time_state) {
+                    const double diff = raw_time - prev_raw_time;
+                    if (diff > 0.0) fallback_step = diff;
                     adjusted_time = raw_time + time_offset;
+                    if (adjusted_time <= prev_adjusted_time) {
+                        time_offset = prev_adjusted_time + fallback_step - raw_time;
+                        adjusted_time = raw_time + time_offset;
+                    }
                 }
             }
 
@@ -252,6 +405,7 @@ Dataset read_lvm_file(const std::string& path, const LoadOptions& options, bool 
         for (int c = part_count; c < col_count; ++c) {
             columns[c].push_back(nan_value);
         }
+        raw_time_rows.push_back(raw_time);
         ++row_count;
     }
 
@@ -259,6 +413,7 @@ Dataset read_lvm_file(const std::string& path, const LoadOptions& options, bool 
     ds.stats.data_sections = section_hits;
     ds.stats.data_rows = row_count;
     ds.stats.max_columns = static_cast<int>(columns.size());
+    ds.time_rebuilt_from_headers = used_header_time_rebuild;
 
     if (row_count == 0 || columns.empty()) {
         ds.error = options.use_time_window
@@ -280,11 +435,13 @@ Dataset read_lvm_file(const std::string& path, const LoadOptions& options, bool 
 
     // Drop rows whose time is NaN, keeping channels aligned.
     ds.time.reserve(time_col.size());
+    ds.raw_time.reserve(time_col.size());
     ds.channels.assign(kept_channels.size(), {});
     for (auto& ch : ds.channels) ch.reserve(time_col.size());
     for (std::size_t r = 0; r < time_col.size(); ++r) {
         if (std::isnan(time_col[r])) continue;
         ds.time.push_back(time_col[r]);
+        ds.raw_time.push_back((r < raw_time_rows.size()) ? raw_time_rows[r] : time_col[r]);
         for (std::size_t c = 0; c < kept_channels.size(); ++c) {
             ds.channels[c].push_back(kept_channels[c][r]);
         }

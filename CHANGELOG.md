@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.10.4
+
+- Переработан welcome-экран: стартовая страница теперь устойчиво адаптируется к разным размерам окна, получила переключатели темы и более согласованную компоновку.
+- Light mode и правая рабочая панель доработаны для больших файлов: выбор временного диапазона, скрытие каналов по умолчанию, более аккуратные отступы, единый стиль переключателей и исправления текстовых артефактов при ресайзе.
+- Улучшено редактирование в интерфейсе: ввод имени канала завершается по клику вне поля, текстовые поля больше не перехватывают горячие клавиши, а компактная легенда каналов зачёркивает только название скрытого канала.
+- Исправлена обработка много-секционных `.lvm` с повреждёнными временными блоками: время секций теперь восстанавливается по `Date` / `Time` / `X0`, а на больших разрывах времени график больше не рисует ложные прямые линии.
+- Reworked the welcome screen so the start page adapts cleanly across window sizes, includes theme switching, and keeps a more consistent layout.
+- Refined Light mode and the right-side work panel for large files with explicit time-range selection, channels hidden by default, better spacing, unified toggle styling, and resize artefact fixes.
+- Improved in-app editing: channel rename closes on outside click, text inputs no longer trigger global hotkeys, and the compact channel legend now strikes through only the hidden channel name.
+- Fixed multi-section `.lvm` handling for corrupted time blocks by rebuilding section timing from `Date` / `Time` / `X0`, while large time gaps now break the plot instead of drawing misleading straight lines.
+
 ## v0.10.3
 
 - Исправлено обрезание текста Light mode на приветственном экране и в настройках.
