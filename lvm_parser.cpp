@@ -213,7 +213,8 @@ Dataset read_lvm_file(const std::string& path, bool verbose) {
     return read_lvm_file(path, LoadOptions{}, verbose);
 }
 
-bool scan_time_bounds(const std::string& path, double& out_start, double& out_end, std::string& error) {
+bool scan_time_bounds(const std::string& path, double& out_start, double& out_end, std::string& error,
+                      const std::atomic<bool>* cancel_flag) {
     std::ifstream in(path, std::ios::binary);
     if (!in) {
         error = "Cannot open file: " + path;
@@ -233,7 +234,13 @@ bool scan_time_bounds(const std::string& path, double& out_start, double& out_en
     ActiveSectionTime active_section{};
 
     std::string raw_line;
+    long long line_index = 0;
     while (std::getline(in, raw_line)) {
+        ++line_index;
+        if (cancel_flag && (line_index & 0xFF) == 0 && cancel_flag->load(std::memory_order_relaxed)) {
+            error = "Operation cancelled.";
+            return false;
+        }
         const std::string line = strip(raw_line);
         if (line.empty()) continue;
         if (starts_with(line, "***End_of_Header***")) {
@@ -317,6 +324,11 @@ Dataset read_lvm_file(const std::string& path, const LoadOptions& options, bool 
     ActiveSectionTime active_section{};
     bool used_header_time_rebuild = false;
     for (; std::getline(in, raw_line); ++line_index) {
+        if (options.cancel_flag && (line_index & 0xFF) == 0 &&
+            options.cancel_flag->load(std::memory_order_relaxed)) {
+            ds.error = "Operation cancelled.";
+            return ds;
+        }
         const std::string line = strip(raw_line);
         if (line.empty()) continue;
 

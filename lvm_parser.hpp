@@ -5,6 +5,7 @@
 // reference Python implementation in lvm_viewer.py so results stay consistent.
 #pragma once
 
+#include <atomic>
 #include <string>
 #include <vector>
 
@@ -22,6 +23,7 @@ struct LoadOptions {
     bool use_time_window = false;
     double time_start = 0.0;
     double time_end = 0.0;
+    const std::atomic<bool>* cancel_flag = nullptr;
 };
 
 // Parsed dataset: a time vector and aligned channel columns.
@@ -43,7 +45,8 @@ struct Dataset {
 // Read and parse a file. Returns ok=false with `error` set on failure.
 Dataset read_lvm_file(const std::string& path, bool verbose = false);
 Dataset read_lvm_file(const std::string& path, const LoadOptions& options, bool verbose = false);
-bool scan_time_bounds(const std::string& path, double& out_start, double& out_end, std::string& error);
+bool scan_time_bounds(const std::string& path, double& out_start, double& out_end, std::string& error,
+                      const std::atomic<bool>* cancel_flag = nullptr);
 
 // Rebuild a monotonically increasing timeline (mirrors the Python "prepare"
 // step that flattens Multi_Headings sections which reset local time).

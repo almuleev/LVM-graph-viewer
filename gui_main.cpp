@@ -37,8 +37,10 @@
 #include <shellapi.h>
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -47,6 +49,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -402,6 +405,10 @@ const int IDC_RANGE_PROMPT_OK = 6205;
 const int IDC_RANGE_PROMPT_CANCEL = 6206;
 const int IDC_HOTKEYS_DIALOG_LIST = 6207;
 const int IDC_HOTKEYS_DIALOG_CLOSE = 6208;
+const int IDC_LOADING_CANCEL = 6209;
+
+constexpr UINT WM_APP_ASYNC_SCAN_DONE = WM_APP + 1;
+constexpr UINT WM_APP_ASYNC_LOAD_DONE = WM_APP + 2;
 
 // ---- string table --------------------------------------------------------
 struct Strings {
@@ -661,6 +668,12 @@ struct HotkeyBinding {
     WORD key = 0;
 };
 
+enum class AsyncLoadStage : unsigned char {
+    None = 0,
+    ScanningRange = 1,
+    LoadingFile = 2
+};
+
 struct App {
     lvm::Dataset ds;
     std::vector<char> visible;
@@ -742,7 +755,19 @@ struct App {
         double duration = 0.0;
         long long estimated_missing_samples = 0;
     };
+    struct TimeYRangeCache {
+        bool valid = false;
+        std::size_t lo = 0;
+        std::size_t hi = 0;
+        double win_start = 0.0;
+        double win_end = 0.0;
+        unsigned long long serial = 0;
+        double ymin = -1.0;
+        double ymax = 1.0;
+    };
     std::vector<GapMarkerVisual> visible_gap_markers;
+    TimeYRangeCache time_yrange_cache;
+    unsigned long long plot_analysis_serial = 1;
     bool pending_marker = false;
     int active_marker = -1;
     bool light_mode = false;
@@ -750,6 +775,13 @@ struct App {
     bool current_file_partial = false;
     double light_mode_open_start = 0.0;
     double light_mode_open_end = 10.0;
+    AsyncLoadStage async_load_stage = AsyncLoadStage::None;
+    unsigned long long async_load_token = 0;
+    std::shared_ptr<std::atomic<bool>> async_load_cancel_flag;
+    std::wstring cached_scan_path;
+    double cached_scan_start = 0.0;
+    double cached_scan_end = 0.0;
+    bool cached_scan_valid = false;
 
     std::wstring file_name;
     std::string last_error;
@@ -847,6 +879,29 @@ struct App {
 
 App g;
 ULONG_PTR g_gdiplus_token = 0;
+
+struct AsyncScanResult {
+    unsigned long long token = 0;
+    std::wstring path;
+    bool ok = false;
+    bool cancelled = false;
+    double range_start = 0.0;
+    double range_end = 0.0;
+    std::string error;
+};
+
+struct AsyncLoadResult {
+    unsigned long long token = 0;
+    std::wstring path;
+    lvm::Dataset ds;
+    bool ok = false;
+    bool cancelled = false;
+    bool hide_channels = false;
+    bool requested_time_window = false;
+    double cached_global_gap_step = 0.0;
+    bool cached_global_gap_step_ready = false;
+    std::string error;
+};
 
 struct LegendItem { int channel; RECT rect; };
 std::vector<LegendItem> g_legend_items;
@@ -2064,6 +2119,7 @@ void refresh_spec_channel_indices() {
 }
 
 bool spectrum_visibility_changed() {
+    if (!g.light_mode) return false;
     return g.spec_visible_state.size() != g.visible.size() || g.spec_visible_state != g.visible;
 }
 
@@ -2133,12 +2189,30 @@ void compute_spectrum_for_window(double start, double end, bool from_selection) 
     g.spec_source_end = end;
     g.spec_source_from_selection = from_selection;
     g.spec_source_valid = end > start;
-    std::vector<std::size_t> visible_channels;
-    visible_channels.reserve(g.visible.size());
-    for (std::size_t i = 0; i < g.visible.size(); ++i) {
-        if (g.visible[i]) visible_channels.push_back(i);
+    bool has_visible_channel = false;
+    for (char visible : g.visible) {
+        if (visible) {
+            has_visible_channel = true;
+            break;
+        }
     }
-    if (visible_channels.empty()) {
+    if (!has_visible_channel) {
+        clear_spectrum_cache_state();
+        g.spec_source_valid = end > start;
+        g.spec_visible_state = g.visible;
+        return;
+    }
+    std::vector<std::size_t> visible_channels;
+    if (g.light_mode) {
+        visible_channels.reserve(g.visible.size());
+        for (std::size_t i = 0; i < g.visible.size(); ++i) {
+            if (g.visible[i]) visible_channels.push_back(i);
+        }
+    } else {
+        visible_channels.resize(g.ds.channel_count());
+        for (std::size_t i = 0; i < visible_channels.size(); ++i) visible_channels[i] = i;
+    }
+    if (g.light_mode && visible_channels.empty()) {
         clear_spectrum_cache_state();
         g.spec_source_valid = end > start;
         g.spec_visible_state = g.visible;
@@ -3476,12 +3550,22 @@ void toggle_play() {
 // ---- loading -------------------------------------------------------------
 
 static HWND g_loading_wnd = nullptr;
+static HWND g_loading_cancel_btn = nullptr;
 static std::wstring g_loading_text;
+static bool g_loading_cancellable = false;
+
+void request_async_load_cancel();
 
 LRESULT CALLBACK LoadingProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_ERASEBKGND:
             return 1;
+        case WM_COMMAND:
+            if (LOWORD(wp) == IDC_LOADING_CANCEL && HIWORD(wp) == BN_CLICKED) {
+                request_async_load_cancel();
+                return 0;
+            }
+            break;
         case WM_PAINT: {
             PAINTSTRUCT ps;
             HDC dc = BeginPaint(hwnd, &ps);
@@ -3502,6 +3586,7 @@ LRESULT CALLBACK LoadingProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SetTextColor(dc, g_theme->text_primary);
 
             RECT text_rect = { card.left + 18, card.top + 18, card.right - 18, card.bottom - 18 };
+            if (g_loading_cancellable) text_rect.bottom -= 42;
             DrawTextW(dc, g_loading_text.c_str(), -1, &text_rect,
                       DT_CENTER | DT_VCENTER | DT_WORDBREAK | DT_NOPREFIX);
 
@@ -3513,8 +3598,9 @@ LRESULT CALLBACK LoadingProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-void show_loading(const std::wstring& msg) {
+void show_loading(const std::wstring& msg, bool cancellable = false) {
     if (g_loading_wnd) { DestroyWindow(g_loading_wnd); g_loading_wnd = nullptr; }
+    g_loading_cancel_btn = nullptr;
     HINSTANCE inst = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(g.main, GWLP_HINSTANCE));
     std::wstring display = msg;
     for (std::size_t i = 0; i < display.size(); ++i) {
@@ -3524,6 +3610,7 @@ void show_loading(const std::wstring& msg) {
         }
     }
     g_loading_text = display;
+    g_loading_cancellable = cancellable;
 
     static ATOM atom = 0;
     if (!atom) {
@@ -3549,7 +3636,8 @@ void show_loading(const std::wstring& msg) {
     const int text_width = static_cast<int>(text_rect.right - text_rect.left);
     const int text_height = static_cast<int>(text_rect.bottom - text_rect.top);
     const int width = std::clamp(text_width + 52, 236, 340);
-    const int height = std::clamp(text_height + 42, 76, 120);
+    const int button_extra = cancellable ? 44 : 0;
+    const int height = std::clamp(text_height + 42 + button_extra, 76, 164);
     g_loading_wnd = CreateWindowExW(
         WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
         L"LvmLoadingOverlay", L"",
@@ -3563,11 +3651,28 @@ void show_loading(const std::wstring& msg) {
                  mr.left + ((mr.right - mr.left) - (wr.right - wr.left)) / 2,
                  mr.top + ((mr.bottom - mr.top) - (wr.bottom - wr.top)) / 2,
                  0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+    if (cancellable) {
+        g_loading_cancel_btn = CreateWindowExW(
+            0, L"BUTTON", speed_prompt_cancel_text(),
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+            0, 0, 92, 28, g_loading_wnd,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LOADING_CANCEL)),
+            inst, nullptr);
+        if (g_loading_cancel_btn) {
+            HFONT font = g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+            SendMessageW(g_loading_cancel_btn, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            MoveWindow(g_loading_cancel_btn, (width - 92) / 2, height - 38, 92, 26, FALSE);
+        }
+    }
+    if (g.main && IsWindow(g.main)) EnableWindow(g.main, FALSE);
     UpdateWindow(g_loading_wnd);
 }
 
 void hide_loading() {
+    g_loading_cancel_btn = nullptr;
+    g_loading_cancellable = false;
     if (g_loading_wnd) { DestroyWindow(g_loading_wnd); g_loading_wnd = nullptr; }
+    if (g.main && IsWindow(g.main)) EnableWindow(g.main, TRUE);
 }
 
 double precompute_global_gap_step(const std::vector<double>& time) {
@@ -3593,29 +3698,41 @@ void ensure_global_gap_step_ready() {
     g.cached_global_gap_step_ready = true;
 }
 
-bool load_path(const std::wstring& wpath, const double* fragment_start = nullptr, const double* fragment_end = nullptr) {
-    show_loading(g.light_mode ? g_str->msg_loading_light : g_str->msg_loading);
-    SetCursor(LoadCursor(nullptr, IDC_WAIT));
-    lvm::LoadOptions load_options{};
-    if (fragment_start && fragment_end && std::isfinite(*fragment_start) && std::isfinite(*fragment_end) && *fragment_end > *fragment_start) {
-        load_options.use_time_window = true;
-        load_options.time_start = *fragment_start;
-        load_options.time_end = *fragment_end;
+void invalidate_plot_analysis_cache() {
+    ++g.plot_analysis_serial;
+    g.time_yrange_cache.valid = false;
+}
+
+template <typename TResult>
+void post_async_result(UINT message, std::unique_ptr<TResult> result) {
+    TResult* raw = result.release();
+    if (!raw) return;
+    if (!g.main || !IsWindow(g.main) || !PostMessageW(g.main, message, 0, reinterpret_cast<LPARAM>(raw))) {
+        delete raw;
     }
-    lvm::Dataset ds = g.light_mode
-        ? lvm::read_lvm_file(to_acp(wpath.c_str()), load_options)
-        : lvm::read_lvm_file(to_acp(wpath.c_str()));
-    SetCursor(LoadCursor(nullptr, IDC_ARROW));
-    hide_loading();
-    if (!ds.ok) { g.last_error = ds.error; return false; }
+}
 
-    const std::vector<double> raw_time = ds.raw_time.empty() ? ds.time : ds.raw_time;
-    lvm::drop_duplicate_time_channels(ds, raw_time);
-    if (!load_options.use_time_window && !ds.time_rebuilt_from_headers) lvm::make_monotonic(ds.time);
+void request_async_load_cancel() {
+    if (g.async_load_cancel_flag) {
+        g.async_load_cancel_flag->store(true, std::memory_order_relaxed);
+    }
+    if (g_loading_cancel_btn && IsWindow(g_loading_cancel_btn)) {
+        EnableWindow(g_loading_cancel_btn, FALSE);
+    }
+}
 
-    g.current_file_partial = load_options.use_time_window || ds.partial;
+void apply_loaded_dataset(lvm::Dataset ds, const std::wstring& wpath, bool hide_channels,
+                          bool requested_time_window, double cached_global_gap_step,
+                          bool cached_global_gap_step_ready) {
+    if (ds.time.empty()) {
+        g.last_error = "No time data available.";
+        MessageBoxW(g.main, to_w(g.last_error).c_str(), g_str->msg_read_err, MB_ICONERROR | MB_OK);
+        return;
+    }
+
+    g.current_file_partial = requested_time_window || ds.partial;
     g.ds = std::move(ds);
-    g.visible.assign(g.ds.channel_count(), g.light_mode ? 0 : 1);
+    g.visible.assign(g.ds.channel_count(), hide_channels ? 0 : 1);
     g.channel_labels.clear();
     for (const auto& n : g.ds.names) g.channel_labels.push_back(to_w(n));
     g_channel_colors.clear();
@@ -3636,11 +3753,9 @@ bool load_path(const std::wstring& wpath, const double* fragment_start = nullptr
     g.win_start = g.data_t0;
     g.win_end = g.data_t1;
     g.approx_dt = (g.data_t1 - g.data_t0) / static_cast<double>(g.ds.rows());
-    g.cached_global_gap_step = 0.0;
-    g.cached_global_gap_step_ready = !g.light_mode;
-    if (g.cached_global_gap_step_ready) {
-        g.cached_global_gap_step = precompute_global_gap_step(g.ds.time);
-    }
+    g.cached_global_gap_step = cached_global_gap_step;
+    g.cached_global_gap_step_ready = cached_global_gap_step_ready;
+    invalidate_plot_analysis_cache();
     clear_measure_point_groups();
     g.guides.clear();
     g.markers.clear();
@@ -3657,13 +3772,19 @@ bool load_path(const std::wstring& wpath, const double* fragment_start = nullptr
     g.playhead = g.data_t0;
     g.playhead_active = false;
     g.auto_y = true;   // a fresh file starts on auto-fit
-    if (g.light_mode) g.auto_y_amp = true;
+    if (hide_channels) g.auto_y_amp = true;
     if (g.autoy) { SendMessageW(g.autoy, BM_SETCHECK, BST_CHECKED, 0); InvalidateRect(g.autoy, nullptr, FALSE); }
     if (g.menu) CheckMenuItem(g.menu, IDC_AUTOY, MF_BYCOMMAND | MF_CHECKED);
     clear_spectrum_cache_state();
     g.spec_source_valid = false;
     g.freq_start = 0.0;
     g.freq_end = 1.0;
+    if (!requested_time_window) {
+        g.cached_scan_path = wpath;
+        g.cached_scan_start = g.data_t0;
+        g.cached_scan_end = g.data_t1;
+        g.cached_scan_valid = true;
+    }
 
     const wchar_t* base = wcsrchr(wpath.c_str(), L'\\');
     g.file_name = base ? base + 1 : wpath;
@@ -3676,31 +3797,123 @@ bool load_path(const std::wstring& wpath, const double* fragment_start = nullptr
     layout();
     set_status();
     InvalidateRect(g.main, nullptr, TRUE);
+    g.last_error.clear();
+}
+
+bool start_async_scan_task(const std::wstring& wpath) {
+    if (g.async_load_stage != AsyncLoadStage::None) {
+        g.last_error = "A file is already loading.";
+        return false;
+    }
+    g.last_error.clear();
+    g.async_load_stage = AsyncLoadStage::ScanningRange;
+    const unsigned long long token = ++g.async_load_token;
+    auto cancel_flag = std::make_shared<std::atomic<bool>>(false);
+    g.async_load_cancel_flag = cancel_flag;
+    show_loading(g_str->msg_scanning_range, true);
+
+    const std::wstring path_copy = wpath;
+    const std::string narrow_path = to_acp(wpath.c_str());
+    try {
+        std::thread([token, path_copy, narrow_path, cancel_flag]() {
+            auto result = std::make_unique<AsyncScanResult>();
+            result->token = token;
+            result->path = path_copy;
+            std::string scan_error;
+            result->ok = lvm::scan_time_bounds(narrow_path, result->range_start, result->range_end, scan_error, cancel_flag.get());
+            result->cancelled = !result->ok && cancel_flag->load(std::memory_order_relaxed);
+            if (!result->ok) result->error = std::move(scan_error);
+            post_async_result(WM_APP_ASYNC_SCAN_DONE, std::move(result));
+        }).detach();
+    } catch (const std::exception& ex) {
+        g.async_load_stage = AsyncLoadStage::None;
+        g.async_load_cancel_flag.reset();
+        hide_loading();
+        g.last_error = ex.what();
+        return false;
+    }
     return true;
+}
+
+bool start_async_load_task(const std::wstring& wpath, const double* fragment_start = nullptr,
+                           const double* fragment_end = nullptr, bool hide_channels = false) {
+    if (g.async_load_stage != AsyncLoadStage::None) {
+        g.last_error = "A file is already loading.";
+        return false;
+    }
+
+    lvm::LoadOptions load_options{};
+    if (fragment_start && fragment_end && std::isfinite(*fragment_start) &&
+        std::isfinite(*fragment_end) && *fragment_end > *fragment_start) {
+        load_options.use_time_window = true;
+        load_options.time_start = *fragment_start;
+        load_options.time_end = *fragment_end;
+    }
+
+    g.last_error.clear();
+    g.async_load_stage = AsyncLoadStage::LoadingFile;
+    const unsigned long long token = ++g.async_load_token;
+    auto cancel_flag = std::make_shared<std::atomic<bool>>(false);
+    g.async_load_cancel_flag = cancel_flag;
+    show_loading(hide_channels ? g_str->msg_loading_light : g_str->msg_loading, true);
+
+    const std::wstring path_copy = wpath;
+    const std::string narrow_path = to_acp(wpath.c_str());
+    try {
+        std::thread([token, path_copy, narrow_path, load_options, hide_channels, cancel_flag]() mutable {
+            auto result = std::make_unique<AsyncLoadResult>();
+            result->token = token;
+            result->path = path_copy;
+            result->hide_channels = hide_channels;
+            result->requested_time_window = load_options.use_time_window;
+            load_options.cancel_flag = cancel_flag.get();
+            result->ds = lvm::read_lvm_file(narrow_path, load_options);
+            result->ok = result->ds.ok;
+            result->cancelled = !result->ok && cancel_flag->load(std::memory_order_relaxed);
+            if (result->ok) {
+                const std::vector<double> raw_time = result->ds.raw_time.empty() ? result->ds.time : result->ds.raw_time;
+                lvm::drop_duplicate_time_channels(result->ds, raw_time);
+                if (!load_options.use_time_window && !result->ds.time_rebuilt_from_headers) {
+                    lvm::make_monotonic(result->ds.time);
+                }
+                if (!hide_channels) {
+                    result->cached_global_gap_step = precompute_global_gap_step(result->ds.time);
+                    result->cached_global_gap_step_ready = true;
+                }
+            } else {
+                result->error = result->ds.error;
+            }
+            post_async_result(WM_APP_ASYNC_LOAD_DONE, std::move(result));
+        }).detach();
+    } catch (const std::exception& ex) {
+        g.async_load_stage = AsyncLoadStage::None;
+        g.async_load_cancel_flag.reset();
+        hide_loading();
+        g.last_error = ex.what();
+        return false;
+    }
+    return true;
+}
+
+bool prompt_and_start_light_mode_load(const std::wstring& wpath, double range_start, double range_end) {
+    double fragment_start = 0.0;
+    double fragment_end = 0.0;
+    if (!prompt_light_mode_window(range_start, range_end, fragment_start, fragment_end)) {
+        g.last_error.clear();
+        return false;
+    }
+    return start_async_load_task(wpath, &fragment_start, &fragment_end, true);
 }
 
 bool load_path_interactive(const std::wstring& wpath) {
     g.last_error.clear();
-    double fragment_start = 0.0;
-    double fragment_end = 0.0;
-    const double* start_ptr = nullptr;
-    const double* end_ptr = nullptr;
     if (g.light_mode) {
-        double range_start = 0.0;
-        double range_end = 0.0;
-        show_loading(g_str->msg_scanning_range);
-        std::string scan_error;
-        const bool scanned = lvm::scan_time_bounds(to_acp(wpath.c_str()), range_start, range_end, scan_error);
-        hide_loading();
-        if (!scanned) {
-            g.last_error = scan_error;
-            return false;
+        if (g.cached_scan_valid && lstrcmpiW(g.cached_scan_path.c_str(), wpath.c_str()) == 0) {
+            return prompt_and_start_light_mode_load(wpath, g.cached_scan_start, g.cached_scan_end);
         }
-        if (!prompt_light_mode_window(range_start, range_end, fragment_start, fragment_end)) return false;
-        start_ptr = &fragment_start;
-        end_ptr = &fragment_end;
+        return start_async_scan_task(wpath);
     }
-    return load_path(wpath, start_ptr, end_ptr);
+    return start_async_load_task(wpath);
 }
 
 void open_file() {
@@ -3771,8 +3984,18 @@ bool current_time_yrange_window(std::size_t lo, std::size_t hi, double& ymin, do
         ymax = 1.0;
         return true;
     }
+    if (g.time_yrange_cache.valid &&
+        g.time_yrange_cache.serial == g.plot_analysis_serial &&
+        g.time_yrange_cache.lo == lo &&
+        g.time_yrange_cache.hi == hi &&
+        g.time_yrange_cache.win_start == g.win_start &&
+        g.time_yrange_cache.win_end == g.win_end) {
+        ymin = g.time_yrange_cache.ymin;
+        ymax = g.time_yrange_cache.ymax;
+        return true;
+    }
     ensure_channel_formula_vectors();
-    const std::size_t stride = light_mode_render_stride(hi - lo, 250000);
+    const std::size_t stride = light_mode_render_stride(hi - lo, g.light_mode ? 120000u : 250000u);
     ymin = 1e300; ymax = -1e300;
     for (std::size_t c = 0; c < g.ds.channel_count(); ++c) {
         if (!g.visible[c]) continue;
@@ -3796,6 +4019,14 @@ bool current_time_yrange_window(std::size_t lo, std::size_t hi, double& ymin, do
     if (ymax - ymin < 1e-12) { ymin -= 1; ymax += 1; }
     const double pad = (ymax - ymin) * 0.05;
     ymin -= pad; ymax += pad;
+    g.time_yrange_cache.valid = true;
+    g.time_yrange_cache.lo = lo;
+    g.time_yrange_cache.hi = hi;
+    g.time_yrange_cache.win_start = g.win_start;
+    g.time_yrange_cache.win_end = g.win_end;
+    g.time_yrange_cache.serial = g.plot_analysis_serial;
+    g.time_yrange_cache.ymin = ymin;
+    g.time_yrange_cache.ymax = ymax;
     return true;
 }
 
@@ -4387,10 +4618,12 @@ void draw_time(HDC dc, const RECT& p) {
     const bool visible_channels = any_visible_channel();
     const bool sparse = (hi - lo) <= static_cast<std::size_t>(pw) * 2;
     const bool allow_smoothing = should_render_smoothed_polyline(hi - lo, pw);
+    const std::size_t light_mode_gap_budget = std::max<std::size_t>(static_cast<std::size_t>(pw) * 48, 120000);
+    const std::size_t normal_gap_budget = std::max<std::size_t>(static_cast<std::size_t>(pw) * 96, 220000);
     const bool enable_gap_scan =
         g.show_gap_markers &&
         (!g.light_mode || visible_channels) &&
-        (hi - lo <= std::max<std::size_t>(static_cast<std::size_t>(pw) * 96, 220000));
+        (hi - lo <= (g.light_mode ? light_mode_gap_budget : normal_gap_budget));
     const double gap_step = enable_gap_scan ? effective_time_gap_step(t, lo, hi) : 0.0;
     const double gap_threshold = (gap_step > 0.0)
         ? (gap_step * 64.0)
@@ -4521,7 +4754,10 @@ void draw_time(HDC dc, const RECT& p) {
             cmax.resize(pw, -1e30f);
             std::fill(cmin.begin(), cmin.end(), 1e30f);
             std::fill(cmax.begin(), cmax.end(), -1e30f);
-            const std::size_t dense_stride = light_mode_render_stride(hi - lo, static_cast<std::size_t>(pw) * 96);
+            const std::size_t dense_budget = g.light_mode
+                ? std::max<std::size_t>(static_cast<std::size_t>(pw) * 40, 4000)
+                : std::max<std::size_t>(static_cast<std::size_t>(pw) * 96, 8000);
+            const std::size_t dense_stride = light_mode_render_stride(hi - lo, dense_budget);
             for (std::size_t i = lo; i < hi; i += dense_stride) {
                 const float v = static_cast<float>(channel_render_value(view, i));
                 if (std::isnan(v)) continue;
@@ -5179,6 +5415,7 @@ std::string current_channel_label(std::size_t ci) {
 void invalidate_formula_runtime() {
     g.formula_runtime_dirty = true;
     invalidate_transformed_channel_cache();
+    invalidate_plot_analysis_cache();
 }
 
 void invalidate_formula_runtime_channel(std::size_t channel_index) {
@@ -5188,6 +5425,7 @@ void invalidate_formula_runtime_channel(std::size_t channel_index) {
     } else {
         invalidate_transformed_channel_cache();
     }
+    invalidate_plot_analysis_cache();
 }
 
 void invalidate_transformed_channel_cache() {
@@ -6679,6 +6917,7 @@ void set_all_channels_visible(bool visible) {
             set_toggle_checked(g.checks[i], visible);
         }
     }
+    invalidate_plot_analysis_cache();
 }
 
 COLORREF mix_color(COLORREF a, COLORREF b, int weight_b) {
@@ -7619,6 +7858,7 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     if (HIWORD(wp) == BN_CLICKED || HIWORD(wp) == BN_DOUBLECLICKED) {
                         toggle_checked_state(ctl);
                         g.light_mode = checked();
+                        invalidate_plot_analysis_cache();
                         save_runtime_settings();
                         refresh_settings_controls();
                     }
@@ -7627,6 +7867,7 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     if (HIWORD(wp) == BN_CLICKED || HIWORD(wp) == BN_DOUBLECLICKED) {
                         toggle_checked_state(ctl);
                         g.show_gap_markers = checked();
+                        invalidate_plot_analysis_cache();
                         save_runtime_settings();
                         InvalidateRect(g.main, nullptr, FALSE);
                         refresh_settings_controls();
@@ -7907,6 +8148,7 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         HWND light = GetDlgItem(hwnd, IDW_LIGHT_MODE);
                         toggle_checked_state(light);
                         g.light_mode = is_toggle_checked(light);
+                        invalidate_plot_analysis_cache();
                     }
                     save_runtime_settings();
                     if (g.settings_wnd) refresh_settings_controls();
@@ -8849,6 +9091,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 g.side_selected_channel = ci;
                 toggle_checked_state(g.checks[ci]);
                 g.visible[ci] = is_toggle_checked(g.checks[ci]);
+                invalidate_plot_analysis_cache();
                 record_settings_change(before);
                 load_side_transform_controls();
                 InvalidateRect(hwnd, nullptr, TRUE);
@@ -8982,6 +9225,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                 if (j < g.checks.size())
                                     set_toggle_checked(g.checks[j], g.visible[j] != 0);
                             }
+                            invalidate_plot_analysis_cache();
                             record_settings_change(before);
                         } else {
                             // Toggle
@@ -8989,6 +9233,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                             g.visible[ci] = !g.visible[ci];
                             if (ci < static_cast<int>(g.checks.size()))
                                 set_toggle_checked(g.checks[ci], g.visible[ci] != 0);
+                            invalidate_plot_analysis_cache();
                             record_settings_change(before);
                         }
                         InvalidateRect(hwnd, nullptr, TRUE);
@@ -9272,6 +9517,53 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
             }
             break;
+        case WM_APP_ASYNC_SCAN_DONE: {
+            std::unique_ptr<AsyncScanResult> result(reinterpret_cast<AsyncScanResult*>(lp));
+            if (!result) return 0;
+            if (result->token != g.async_load_token || g.async_load_stage != AsyncLoadStage::ScanningRange) return 0;
+            g.async_load_stage = AsyncLoadStage::None;
+            g.async_load_cancel_flag.reset();
+            hide_loading();
+            if (result->cancelled) {
+                g.last_error.clear();
+                return 0;
+            }
+            if (!result->ok) {
+                g.last_error = result->error;
+                MessageBoxW(hwnd, to_w(g.last_error).c_str(), g_str->msg_read_err, MB_ICONERROR | MB_OK);
+                return 0;
+            }
+            g.cached_scan_path = result->path;
+            g.cached_scan_start = result->range_start;
+            g.cached_scan_end = result->range_end;
+            g.cached_scan_valid = true;
+            if (!prompt_and_start_light_mode_load(result->path, result->range_start, result->range_end) &&
+                !g.last_error.empty()) {
+                MessageBoxW(hwnd, to_w(g.last_error).c_str(), g_str->msg_read_err, MB_ICONERROR | MB_OK);
+            }
+            return 0;
+        }
+        case WM_APP_ASYNC_LOAD_DONE: {
+            std::unique_ptr<AsyncLoadResult> result(reinterpret_cast<AsyncLoadResult*>(lp));
+            if (!result) return 0;
+            if (result->token != g.async_load_token || g.async_load_stage != AsyncLoadStage::LoadingFile) return 0;
+            g.async_load_stage = AsyncLoadStage::None;
+            g.async_load_cancel_flag.reset();
+            hide_loading();
+            if (result->cancelled) {
+                g.last_error.clear();
+                return 0;
+            }
+            if (!result->ok) {
+                g.last_error = result->error;
+                MessageBoxW(hwnd, to_w(g.last_error).c_str(), g_str->msg_read_err, MB_ICONERROR | MB_OK);
+                return 0;
+            }
+            apply_loaded_dataset(std::move(result->ds), result->path, result->hide_channels,
+                                 result->requested_time_window, result->cached_global_gap_step,
+                                 result->cached_global_gap_step_ready);
+            return 0;
+        }
         case WM_DROPFILES: {
             HDROP hDrop = reinterpret_cast<HDROP>(wp);
             UINT count = DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);
@@ -9286,6 +9578,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         case WM_DESTROY:
+            request_async_load_cancel();
+            hide_loading();
             save_runtime_settings();
             save_app_settings();
             stop_play();
