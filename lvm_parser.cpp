@@ -65,6 +65,45 @@ double parse_cell(const std::string& cell, bool& is_numeric) {
     return value;
 }
 
+struct RowSummary {
+    bool first_numeric = false;
+    double first_value = std::nan("");
+    int numeric_count = 0;
+};
+
+RowSummary summarize_numeric_row(const std::string& line) {
+    RowSummary summary;
+    std::string field;
+    field.reserve(32);
+    int column_index = 0;
+    auto flush_field = [&]() {
+        bool is_numeric = false;
+        const std::string cell = strip(field);
+        const double value = parse_cell(cell, is_numeric);
+        if (column_index == 0) {
+            summary.first_numeric = is_numeric;
+            summary.first_value = value;
+        }
+        if (is_numeric) ++summary.numeric_count;
+        field.clear();
+        ++column_index;
+    };
+
+    for (char ch : line) {
+        if (ch == ',') ch = '.';
+        if (ch == '\t') {
+            flush_field();
+            if (summary.first_numeric && summary.numeric_count >= 2) break;
+        } else {
+            field.push_back(ch);
+        }
+    }
+    if (!field.empty() || column_index == 0 || (!summary.first_numeric && summary.numeric_count < 2)) {
+        flush_field();
+    }
+    return summary;
+}
+
 struct PendingSectionTime {
     bool have_date = false;
     bool have_time = false;
@@ -208,26 +247,10 @@ bool scan_time_bounds(const std::string& path, double& out_start, double& out_en
             continue;
         }
 
-        std::vector<double> parsed;
-        int numeric_count = 0;
-        std::string field;
-        auto flush_field = [&]() {
-            bool is_numeric = false;
-            const std::string cell = strip(field);
-            const double v = parse_cell(cell, is_numeric);
-            parsed.push_back(v);
-            if (is_numeric) ++numeric_count;
-            field.clear();
-        };
-        for (char ch : line) {
-            if (ch == ',') ch = '.';
-            if (ch == '\t') flush_field();
-            else field.push_back(ch);
-        }
-        flush_field();
-        if (numeric_count < 2 || parsed.empty() || std::isnan(parsed[0])) continue;
+        const RowSummary row = summarize_numeric_row(line);
+        if (row.numeric_count < 2 || !row.first_numeric || std::isnan(row.first_value)) continue;
 
-        const double raw_time = parsed[0];
+        const double raw_time = row.first_value;
         double adjusted_time = raw_time;
         if (active_section.valid) {
             adjusted_time = active_section.offset_seconds + (raw_time - active_section.x0);
@@ -274,6 +297,7 @@ Dataset read_lvm_file(const std::string& path, const LoadOptions& options, bool 
     std::vector<std::vector<double>> columns;
     std::vector<char> column_has_value;  // any non-NaN seen in this column
     std::vector<double> raw_time_rows;
+    bool has_nan_time_rows = false;
     long long row_count = 0;
 
     int header_count = 0;
@@ -386,6 +410,7 @@ Dataset read_lvm_file(const std::string& path, const LoadOptions& options, bool 
         }
 
         if (!keep_row) continue;
+        if (parsed.empty() || std::isnan(parsed[0])) has_nan_time_rows = true;
 
         // Widen the column store to fit this row, back-filling earlier rows.
         if (part_count > static_cast<int>(columns.size())) {
@@ -434,16 +459,22 @@ Dataset read_lvm_file(const std::string& path, const LoadOptions& options, bool 
     }
 
     // Drop rows whose time is NaN, keeping channels aligned.
-    ds.time.reserve(time_col.size());
-    ds.raw_time.reserve(time_col.size());
-    ds.channels.assign(kept_channels.size(), {});
-    for (auto& ch : ds.channels) ch.reserve(time_col.size());
-    for (std::size_t r = 0; r < time_col.size(); ++r) {
-        if (std::isnan(time_col[r])) continue;
-        ds.time.push_back(time_col[r]);
-        ds.raw_time.push_back((r < raw_time_rows.size()) ? raw_time_rows[r] : time_col[r]);
-        for (std::size_t c = 0; c < kept_channels.size(); ++c) {
-            ds.channels[c].push_back(kept_channels[c][r]);
+    if (!has_nan_time_rows && raw_time_rows.size() == time_col.size()) {
+        ds.time = std::move(time_col);
+        ds.raw_time = std::move(raw_time_rows);
+        ds.channels = std::move(kept_channels);
+    } else {
+        ds.time.reserve(time_col.size());
+        ds.raw_time.reserve(time_col.size());
+        ds.channels.assign(kept_channels.size(), {});
+        for (auto& ch : ds.channels) ch.reserve(time_col.size());
+        for (std::size_t r = 0; r < time_col.size(); ++r) {
+            if (std::isnan(time_col[r])) continue;
+            ds.time.push_back(time_col[r]);
+            ds.raw_time.push_back((r < raw_time_rows.size()) ? raw_time_rows[r] : time_col[r]);
+            for (std::size_t c = 0; c < kept_channels.size(); ++c) {
+                ds.channels[c].push_back(kept_channels[c][r]);
+            }
         }
     }
     ds.names = std::move(kept_names);
@@ -514,8 +545,8 @@ std::vector<std::string> drop_duplicate_time_channels(Dataset& ds,
         if (any_valid && duplicate) {
             dropped.push_back(ds.names[c]);
         } else {
-            kept_names.push_back(ds.names[c]);
-            kept_channels.push_back(ds.channels[c]);
+            kept_names.push_back(std::move(ds.names[c]));
+            kept_channels.push_back(std::move(ds.channels[c]));
         }
     }
 

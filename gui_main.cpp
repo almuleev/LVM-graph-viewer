@@ -127,7 +127,6 @@ enum {
     IDM_MODE_TIME = 1700,
     IDM_MODE_FREQ,
     IDW_LIGHT_MODE = 1800,
-    IDW_LIGHT_HINT,
 
     IDC_CHAN_BASE = 2000,
     IDC_CHAN_LABEL_BASE = 3000,
@@ -186,7 +185,6 @@ enum {
     IDC_SET_POINT_GROUP_COLOR,
     IDC_SET_POINT_GROUP_NEW,
     IDC_SET_LIGHT_MODE = 5130,
-    IDC_SET_LIGHT_HINT,
     IDC_SET_GAP_MARKERS,
 
     IDC_SET_GROUP_GENERAL = 5150,
@@ -434,7 +432,6 @@ struct Strings {
     const wchar_t* lang_ru; const wchar_t* lang_en;
     const wchar_t* m_lang;
     const wchar_t* light_mode;
-    const wchar_t* light_mode_hint;
     const wchar_t* light_mode_status;
     const wchar_t* light_mode_range_title;
     const wchar_t* light_mode_range_start;
@@ -497,7 +494,6 @@ static const Strings kRu = {
     L"Открыть файл…", L"Сохранить PNG", L"Сохранить CSV", L"Переключить Время / Гц", L"Воспроизведение", L"Пауза", L"Режим измерения точек", L"Сбросить вид", L"Автомасштабирование", L"Настройки точек",
     L"Русский", L"English", L"Язык",
     L"Лёгкий режим",
-    L"После выбора файла запрашивает временной диапазон\r\nи открывает только этот фрагмент. Каналы скрыты.",
     L"   |   Лёгкий режим: открыт только выбранный временной фрагмент",
     L"Лёгкий режим: диапазон открытия",
     L"С какой секунды открыть фрагмент:",
@@ -560,7 +556,6 @@ static const Strings kEn = {
     L"Open file…", L"Save PNG", L"Save CSV", L"Toggle Time / Hz", L"Playback", L"Pause", L"Measurement point mode", L"Reset view", L"Auto zoom", L"Point settings",
     L"Русский", L"English", L"Language",
     L"Light mode",
-    L"After file selection, asks for a time range\r\nand opens only that fragment. Channels start hidden.",
     L"   |   Light mode: only the selected time fragment is open",
     L"Light mode: open time range",
     L"Open the fragment starting from this second:",
@@ -672,6 +667,8 @@ struct App {
     std::vector<std::wstring> channel_labels;  // user-editable display names
     std::wstring global_formula = L"x";
     std::vector<FormulaToken> global_formula_rpn;
+    bool formula_runtime_dirty = true;
+    bool formula_ini_deferred = false;
     bool global_formula_identity = true;
     bool global_formula_affine = true;
     double global_formula_mul = 1.0;
@@ -695,6 +692,10 @@ struct App {
 
     lvm::Spectrum spec;
     bool spec_valid = false;
+    std::vector<int> spec_channel_indices;
+    std::vector<char> spec_visible_state;
+    double cached_global_gap_step = 0.0;
+    bool cached_global_gap_step_ready = false;
 
     bool visual_smooth = false;  // Catmull-Rom spline rendering (data unchanged)
 
@@ -822,6 +823,8 @@ struct App {
     int drag_x = 0, drag_y = 0;
     double drag_lo = 0.0, drag_hi = 0.0;
     double drag_y_lo = 0.0, drag_y_hi = 0.0;
+    bool gap_click_pending = false;
+    int gap_click_index = -1;
 
     bool fft_window_active = false;
     double fft_window_start = 0.0, fft_window_end = 0.0;
@@ -834,6 +837,12 @@ struct App {
     bool spec_source_valid = false;
 
     bool vertical_pan = true;  // enable vertical panning with left-drag
+
+    HDC backbuffer_dc = nullptr;
+    HBITMAP backbuffer_bmp = nullptr;
+    HBITMAP backbuffer_prev_bmp = nullptr;
+    int backbuffer_w = 0;
+    int backbuffer_h = 0;
 };
 
 App g;
@@ -900,6 +909,8 @@ void load_side_transform_controls();
 std::wstring format_edit_number(double value);
 COLORREF mix_color(COLORREF a, COLORREF b, int weight_b);
 void ensure_channel_formula_vectors();
+void invalidate_formula_runtime();
+void invalidate_formula_runtime_channel(std::size_t channel_index);
 void invalidate_transformed_channel_cache();
 void ensure_transformed_channel_cache(std::size_t channel_index);
 void load_channel_formulas_from_ini();
@@ -907,8 +918,14 @@ void finish_channel_rename(bool apply);
 void save_runtime_settings();
 void set_status();
 void sync_menu();
+void clear_spectrum_cache_state();
+void compute_spectrum();
 void compute_spectrum_from_current_source();
+bool ensure_current_spectrum();
+double visible_spectrum_ymax();
 SettingsSnapshot capture_settings_snapshot();
+void ensure_channel_formula_storage();
+void ensure_channel_formulas_loaded();
 bool settings_snapshot_differs(const SettingsSnapshot& a, const SettingsSnapshot& b);
 void apply_settings_snapshot(const SettingsSnapshot& snapshot);
 bool record_settings_change(const SettingsSnapshot& before);
@@ -1672,15 +1689,13 @@ void sync_channel_controls_from_state() {
 void rebuild_formula_cache_from_state() {
     g.global_formula_rpn.clear();
     g.channel_formula_rpn.assign(g.channel_formulas.size(), {});
+    invalidate_formula_runtime();
     ensure_channel_formula_vectors();
-    invalidate_transformed_channel_cache();
 }
 
 void recompute_transforms_from_state() {
-    g.spec_valid = false;
-    g.spec = lvm::Spectrum{};
-    g.spec_source_valid = false;
-    compute_spectrum_from_current_source();
+    clear_spectrum_cache_state();
+    if (g.freq_mode) compute_spectrum();
     sync_menu();
 }
 
@@ -2032,15 +2047,47 @@ void set_status() {
 
 void ensure_channel_formula_vectors();
 double transform_channel_value(std::size_t ci, double raw);
+int channel_index_by_name(const std::string& name);
 
-bool build_time_window_dataset(const lvm::Dataset& in, double start, double end, lvm::Dataset& out) {
+void clear_spectrum_cache_state() {
+    g.spec_valid = false;
+    g.spec = lvm::Spectrum{};
+    g.spec_channel_indices.clear();
+    g.spec_visible_state.clear();
+}
+
+void refresh_spec_channel_indices() {
+    g.spec_channel_indices.assign(g.spec.names.size(), -1);
+    for (std::size_t i = 0; i < g.spec.names.size(); ++i) {
+        g.spec_channel_indices[i] = channel_index_by_name(g.spec.names[i]);
+    }
+}
+
+bool spectrum_visibility_changed() {
+    return g.spec_visible_state.size() != g.visible.size() || g.spec_visible_state != g.visible;
+}
+
+bool build_time_window_dataset(const lvm::Dataset& in, double start, double end, lvm::Dataset& out,
+                               const std::vector<std::size_t>* selected_channels = nullptr) {
     out = lvm::Dataset{};
     out.stats = in.stats;
     out.ok = true;
-    out.names = in.names;
-    out.channels.resize(in.channels.size());
     ensure_channel_formula_vectors();
     if (in.time.empty()) return true;
+
+    std::vector<std::size_t> channel_indices;
+    if (selected_channels && !selected_channels->empty()) {
+        channel_indices = *selected_channels;
+    } else {
+        channel_indices.resize(in.channels.size());
+        for (std::size_t i = 0; i < in.channels.size(); ++i) channel_indices[i] = i;
+    }
+    out.names.reserve(channel_indices.size());
+    out.channels.resize(channel_indices.size());
+    for (std::size_t channel_index : channel_indices) {
+        if (channel_index < in.names.size()) out.names.push_back(in.names[channel_index]);
+        else out.names.push_back("Channel_" + std::to_string(channel_index + 1));
+    }
 
     const std::size_t lo = static_cast<std::size_t>(
         std::lower_bound(in.time.begin(), in.time.end(), start) - in.time.begin());
@@ -2050,13 +2097,14 @@ bool build_time_window_dataset(const lvm::Dataset& in, double start, double end,
 
     out.time.assign(in.time.begin() + static_cast<std::ptrdiff_t>(lo),
                     in.time.begin() + static_cast<std::ptrdiff_t>(hi));
-    for (std::size_t c = 0; c < in.channels.size(); ++c) {
-        out.channels[c].reserve(hi - lo);
+    for (std::size_t out_index = 0; out_index < channel_indices.size(); ++out_index) {
+        const std::size_t c = channel_indices[out_index];
+        out.channels[out_index].reserve(hi - lo);
         const TransformRuntimeKind kind = (c < g.channel_transform_kind.size())
             ? g.channel_transform_kind[c]
             : TransformRuntimeKind::Identity;
         if (kind == TransformRuntimeKind::Identity) {
-            out.channels[c].insert(out.channels[c].end(),
+            out.channels[out_index].insert(out.channels[out_index].end(),
                                    in.channels[c].begin() + static_cast<std::ptrdiff_t>(lo),
                                    in.channels[c].begin() + static_cast<std::ptrdiff_t>(hi));
             continue;
@@ -2065,13 +2113,13 @@ bool build_time_window_dataset(const lvm::Dataset& in, double start, double end,
             const double mul = g.channel_transform_mul[c];
             const double add = g.channel_transform_add[c];
             for (std::size_t r = lo; r < hi; ++r) {
-                out.channels[c].push_back(in.channels[c][r] * mul + add);
+                out.channels[out_index].push_back(in.channels[c][r] * mul + add);
             }
             continue;
         }
         ensure_transformed_channel_cache(c);
         const auto& cache = g.transformed_channel_cache[c];
-        out.channels[c].insert(out.channels[c].end(),
+        out.channels[out_index].insert(out.channels[out_index].end(),
                                cache.begin() + static_cast<std::ptrdiff_t>(lo),
                                cache.begin() + static_cast<std::ptrdiff_t>(hi));
     }
@@ -2085,10 +2133,23 @@ void compute_spectrum_for_window(double start, double end, bool from_selection) 
     g.spec_source_end = end;
     g.spec_source_from_selection = from_selection;
     g.spec_source_valid = end > start;
+    std::vector<std::size_t> visible_channels;
+    visible_channels.reserve(g.visible.size());
+    for (std::size_t i = 0; i < g.visible.size(); ++i) {
+        if (g.visible[i]) visible_channels.push_back(i);
+    }
+    if (visible_channels.empty()) {
+        clear_spectrum_cache_state();
+        g.spec_source_valid = end > start;
+        g.spec_visible_state = g.visible;
+        return;
+    }
     lvm::Dataset view;
-    build_time_window_dataset(g.ds, start, end, view);
+    build_time_window_dataset(g.ds, start, end, view, &visible_channels);
     g.spec = lvm::compute_spectrum(view, 16384);
     g.spec_valid = g.spec.ok;
+    refresh_spec_channel_indices();
+    g.spec_visible_state = g.visible;
 }
 
 void compute_spectrum_from_current_source() {
@@ -2109,6 +2170,12 @@ void compute_spectrum() {
         return;
     }
     compute_spectrum_from_current_source();
+}
+
+bool ensure_current_spectrum() {
+    if (!has_data()) return false;
+    if (!g.spec_valid || spectrum_visibility_changed()) compute_spectrum();
+    return g.spec_valid;
 }
 
 int channel_index_by_name(const std::string& name) {
@@ -2282,16 +2349,24 @@ int side_selected_point_group() {
 }
 
 void load_side_transform_controls() {
-    ensure_channel_formula_vectors();
+    const bool formulas_ready = !g.formula_ini_deferred;
+    const std::wstring default_formula = default_channel_formula_text();
     if (g.side_global_formula_edit) {
-        SetWindowTextW(g.side_global_formula_edit, g.global_formula.c_str());
+        SetWindowTextW(g.side_global_formula_edit,
+            formulas_ready ? g.global_formula.c_str() : default_formula.c_str());
         EnableWindow(g.side_global_formula_edit, has_data());
     }
     if (g.side_global_formula_apply) EnableWindow(g.side_global_formula_apply, has_data());
     const int ci = g.side_selected_channel;
-    const bool valid = ci >= 0 && ci < static_cast<int>(g.channel_formulas.size());
+    const bool valid = ci >= 0 && ci < static_cast<int>(g.ds.channel_count());
     if (g.side_formula_edit) {
-        SetWindowTextW(g.side_formula_edit, valid ? g.channel_formulas[static_cast<std::size_t>(ci)].c_str() : default_channel_formula_text().c_str());
+        const wchar_t* text = default_formula.c_str();
+        if (valid && static_cast<std::size_t>(ci) < g.channel_formulas.size()) {
+            text = formulas_ready
+                ? g.channel_formulas[static_cast<std::size_t>(ci)].c_str()
+                : default_formula.c_str();
+        }
+        SetWindowTextW(g.side_formula_edit, text);
         EnableWindow(g.side_formula_edit, has_data());
     }
     if (g.side_channel_color) EnableWindow(g.side_channel_color, valid);
@@ -2395,6 +2470,11 @@ void set_side_panel_tab(int tab) {
     if (!show_channels && g.channel_edit) ShowWindow(g.channel_edit, SW_HIDE);
     if (g.side_tab_channels) InvalidateRect(g.side_tab_channels, nullptr, FALSE);
     if (g.side_tab_points) InvalidateRect(g.side_tab_points, nullptr, FALSE);
+    if (show_channels) {
+        load_side_transform_controls();
+    } else if (show_points) {
+        populate_side_point_group_list();
+    }
 }
 
 void apply_side_panel_visibility() {
@@ -2442,8 +2522,6 @@ void refresh_side_panel_controls() {
         SetWindowTextW(ctl, item.text);
         set_toggle_checked(ctl, item.value);
     }
-    load_side_transform_controls();
-    populate_side_point_group_list();
     apply_side_panel_visibility();
 }
 
@@ -2458,7 +2536,7 @@ void layout() {
 
     g.toolbar_seps.clear();
     int x = 8;
-    auto place = [&](HWND h, int w, int row_y) { MoveWindow(h, x, row_y, w, 28, TRUE); x += w + 4; };
+    auto place = [&](HWND h, int w, int row_y) { MoveWindow(h, x, row_y, w, 28, FALSE); x += w + 4; };
     auto sep = [&]() { g.toolbar_seps.push_back(x + 2); x += 8; };
     auto text_button_width = [&](HWND h, int min_w, int pad) {
         if (!h) return min_w;
@@ -2504,10 +2582,10 @@ void layout() {
     const int channels_viewport_top = kTopBar + 78;
     const int points_viewport_top = kTopBar + 48;
 
-    MoveWindow(g.show_all_btn, panel_x, kTopBar + 42, 86, 28, TRUE);
-    MoveWindow(g.hide_all_btn, panel_x + 92, kTopBar + 42, 86, 28, TRUE);
-    if (g.side_tab_channels) MoveWindow(g.side_tab_channels, panel_x, kTopBar + 8, 132, 28, TRUE);
-    if (g.side_tab_points) MoveWindow(g.side_tab_points, panel_x + 136, kTopBar + 8, 132, 28, TRUE);
+    MoveWindow(g.show_all_btn, panel_x, kTopBar + 42, 86, 28, FALSE);
+    MoveWindow(g.hide_all_btn, panel_x + 92, kTopBar + 42, 86, 28, FALSE);
+    if (g.side_tab_channels) MoveWindow(g.side_tab_channels, panel_x, kTopBar + 8, 132, 28, FALSE);
+    if (g.side_tab_points) MoveWindow(g.side_tab_points, panel_x + 136, kTopBar + 8, 132, 28, FALSE);
     apply_side_panel_visibility();
 
     const int channels_content_estimate =
@@ -2526,7 +2604,7 @@ void layout() {
 
     if (g.side_scrollbar) {
         MoveWindow(g.side_scrollbar, panel_left + panel_w - scroll_w, active_viewport_top,
-                   scroll_w, viewport_height, TRUE);
+                   scroll_w, viewport_height, FALSE);
     }
 
     auto place_scrolled = [&](HWND ctl, int x0, int y_rel, int w, int h, int viewport_top, bool visible_in_tab) {
@@ -2534,7 +2612,7 @@ void layout() {
         const int y_abs = viewport_top + y_rel - g.side_scroll_y;
         const bool visible = visible_in_tab && y_abs + h > viewport_top && y_abs < viewport_bottom;
         ShowWindow(ctl, visible ? SW_SHOW : SW_HIDE);
-        if (visible) MoveWindow(ctl, x0, y_abs, max(1, w), max(1, h), TRUE);
+        if (visible) MoveWindow(ctl, x0, y_abs, max(1, w), max(1, h), FALSE);
     };
 
     if (g.side_channel_hint) ShowWindow(g.side_channel_hint, SW_HIDE);
@@ -2559,7 +2637,7 @@ void layout() {
             RECT r;
             GetWindowRect(g.check_labels[g.editing_channel], &r);
             MapWindowPoints(nullptr, g.main, reinterpret_cast<LPPOINT>(&r), 2);
-            MoveWindow(g.channel_edit, r.left - 2, r.top - 1, (r.right - r.left) + 4, (r.bottom - r.top) + 2, TRUE);
+            MoveWindow(g.channel_edit, r.left - 2, r.top - 1, (r.right - r.left) + 4, (r.bottom - r.top) + 2, FALSE);
         }
     }
 
@@ -2621,7 +2699,7 @@ void layout() {
 
     update_side_panel_scrollbar(active_viewport_top, g.side_panel_tab == 0 ? g.side_content_height_channels : g.side_content_height_points);
 
-    MoveWindow(g.status, 8, ch - kBottomBar + 4, cw - 16, 20, TRUE);
+    MoveWindow(g.status, 8, ch - kBottomBar + 4, cw - 16, 20, FALSE);
 }
 
 RECT plot_rect() {
@@ -2651,7 +2729,7 @@ void clamp_range(double& lo, double& hi, double minb, double maxb, double minw) 
 
 bool active_axis(double*& lo, double*& hi, double& minb, double& maxb, double& minw) {
     if (g.freq_mode) {
-        if (!g.spec_valid || g.spec.freqs.size() < 2) return false;
+        if (!ensure_current_spectrum() || g.spec.freqs.size() < 2) return false;
         lo = &g.freq_start; hi = &g.freq_end;
         minb = 0.0; maxb = g.spec.nyquist;
         minw = (g.spec.freqs[1] - g.spec.freqs[0]) * 0.5;
@@ -3250,13 +3328,7 @@ void zoom_y_at(double center_frac, double factor) {
 
 void zoom_y_amp_at(double center_frac, double factor) {
     (void)center_frac;
-    if (!g.spec_valid || g.spec.amp.empty()) return;
-    double ymax = 0.0;
-    for (std::size_t j = 0; j < g.spec.amp.size(); ++j) {
-        int ci = channel_index_by_name(g.spec.names[j]);
-        if (ci < 0 || !g.visible[ci]) continue;
-        for (auto v : g.spec.amp[j]) if (v > ymax) ymax = v;
-    }
+    double ymax = visible_spectrum_ymax();
     if (ymax <= 0) ymax = 1.0;
     double ytop = ymax * 1.08;
     if (!g.auto_y_amp) ytop = g.y_amp_max;
@@ -3282,15 +3354,36 @@ void pan_by(double frac) {
     invalidate_plot();
 }
 
+bool prepare_plot_drag(int mx, int my) {
+    double *lo, *hi, minb, maxb, minw;
+    if (!active_axis(lo, hi, minb, maxb, minw)) return false;
+    g.drag_x = mx;
+    g.drag_y = my;
+    g.drag_lo = *lo;
+    g.drag_hi = *hi;
+    if (g.freq_mode) {
+        if (g.auto_y_amp) {
+            double ymax = visible_spectrum_ymax();
+            if (ymax <= 0) ymax = 1.0;
+            g.drag_y_hi = ymax * 1.08;
+        } else {
+            g.drag_y_hi = g.y_amp_max;
+        }
+        g.drag_y_lo = 0.0;
+    } else {
+        if (g.auto_y) {
+            current_time_yrange(g.drag_y_lo, g.drag_y_hi);
+        } else {
+            g.drag_y_lo = g.y_lock_min;
+            g.drag_y_hi = g.y_lock_max;
+        }
+    }
+    return true;
+}
+
 void pan_y_by(double frac) {
     if (g.freq_mode) {
-        if (!g.spec_valid || g.spec.amp.empty()) return;
-        double ymax = 0.0;
-        for (std::size_t j = 0; j < g.spec.amp.size(); ++j) {
-            int ci = channel_index_by_name(g.spec.names[j]);
-            if (ci < 0 || !g.visible[ci]) continue;
-            for (auto v : g.spec.amp[j]) if (v > ymax) ymax = v;
-        }
+        double ymax = visible_spectrum_ymax();
         if (ymax <= 0) ymax = 1.0;
         double ytop = ymax * 1.08;
         if (!g.auto_y_amp) ytop = g.y_amp_max;
@@ -3477,6 +3570,29 @@ void hide_loading() {
     if (g_loading_wnd) { DestroyWindow(g_loading_wnd); g_loading_wnd = nullptr; }
 }
 
+double precompute_global_gap_step(const std::vector<double>& time) {
+    if (time.size() <= 1) return 0.0;
+    std::vector<double> diffs;
+    diffs.reserve(std::min<std::size_t>(4096, time.size() - 1));
+    const std::size_t stride = std::max<std::size_t>(1, (time.size() - 1) / 4096);
+    for (std::size_t i = 1; i < time.size() && diffs.size() < 4096; i += stride) {
+        const double diff = time[i] - time[i - 1];
+        if (std::isfinite(diff) && diff > 0.0) diffs.push_back(diff);
+    }
+    if (diffs.empty()) return 0.0;
+    std::sort(diffs.begin(), diffs.end());
+    const std::size_t mid = diffs.size() / 2;
+    return (diffs.size() % 2 == 0)
+        ? 0.5 * (diffs[mid - 1] + diffs[mid])
+        : diffs[mid];
+}
+
+void ensure_global_gap_step_ready() {
+    if (g.cached_global_gap_step_ready) return;
+    g.cached_global_gap_step = precompute_global_gap_step(g.ds.time);
+    g.cached_global_gap_step_ready = true;
+}
+
 bool load_path(const std::wstring& wpath, const double* fragment_start = nullptr, const double* fragment_end = nullptr) {
     show_loading(g.light_mode ? g_str->msg_loading_light : g_str->msg_loading);
     SetCursor(LoadCursor(nullptr, IDC_WAIT));
@@ -3509,13 +3625,22 @@ bool load_path(const std::wstring& wpath, const double* fragment_start = nullptr
     g.side_scroll_y = 0;
     g.channel_formulas.assign(g.ds.channel_count(), default_channel_formula_text());
     g.channel_formula_rpn.assign(g.ds.channel_count(), {});
-    load_channel_formulas_from_ini();
+    g.global_formula = default_channel_formula_text();
+    g.global_formula_rpn.clear();
+    g.formula_runtime_dirty = true;
+    g.formula_ini_deferred = g.light_mode;
+    if (!g.formula_ini_deferred) load_channel_formulas_from_ini();
     g.data_t0 = g.ds.time.front();
     g.data_t1 = g.ds.time.back();
     if (g.data_t1 <= g.data_t0) g.data_t1 = g.data_t0 + 1.0;
     g.win_start = g.data_t0;
     g.win_end = g.data_t1;
     g.approx_dt = (g.data_t1 - g.data_t0) / static_cast<double>(g.ds.rows());
+    g.cached_global_gap_step = 0.0;
+    g.cached_global_gap_step_ready = !g.light_mode;
+    if (g.cached_global_gap_step_ready) {
+        g.cached_global_gap_step = precompute_global_gap_step(g.ds.time);
+    }
     clear_measure_point_groups();
     g.guides.clear();
     g.markers.clear();
@@ -3532,11 +3657,10 @@ bool load_path(const std::wstring& wpath, const double* fragment_start = nullptr
     g.playhead = g.data_t0;
     g.playhead_active = false;
     g.auto_y = true;   // a fresh file starts on auto-fit
+    if (g.light_mode) g.auto_y_amp = true;
     if (g.autoy) { SendMessageW(g.autoy, BM_SETCHECK, BST_CHECKED, 0); InvalidateRect(g.autoy, nullptr, FALSE); }
     if (g.menu) CheckMenuItem(g.menu, IDC_AUTOY, MF_BYCOMMAND | MF_CHECKED);
-    if (g.settings_wnd) refresh_settings_controls();
-    g.spec_valid = false;
-    g.spec = lvm::Spectrum{};
+    clear_spectrum_cache_state();
     g.spec_source_valid = false;
     g.freq_start = 0.0;
     g.freq_end = 1.0;
@@ -3595,70 +3719,77 @@ void open_file() {
 
 // ---- series ---------------------------------------------------------------
 
-// Copy transformed values for indices [lo,hi) into `out` as floats.
-void build_series(std::size_t channel_index, std::size_t lo, std::size_t hi,
-                  std::vector<float>& out) {
-    ensure_channel_formula_vectors();
-    if (channel_index >= g.ds.channels.size() || hi < lo) {
-        out.clear();
-        return;
-    }
-    const std::vector<double>& col = g.ds.channels[channel_index];
-    const std::size_t count = hi - lo;
-    out.resize(count);
-    const TransformRuntimeKind kind = (channel_index < g.channel_transform_kind.size())
+struct ChannelRenderView {
+    const std::vector<double>* raw = nullptr;
+    const std::vector<double>* cache = nullptr;
+    TransformRuntimeKind kind = TransformRuntimeKind::Identity;
+    double mul = 1.0;
+    double add = 0.0;
+};
+
+ChannelRenderView make_channel_render_view(std::size_t channel_index) {
+    ChannelRenderView view;
+    if (channel_index >= g.ds.channels.size()) return view;
+    view.raw = &g.ds.channels[channel_index];
+    view.kind = (channel_index < g.channel_transform_kind.size())
         ? g.channel_transform_kind[channel_index]
         : TransformRuntimeKind::Identity;
-    if (kind == TransformRuntimeKind::Identity) {
-        for (std::size_t i = 0; i < count; ++i) out[i] = static_cast<float>(col[lo + i]);
-        return;
+    if (view.kind == TransformRuntimeKind::Affine) {
+        view.mul = g.channel_transform_mul[channel_index];
+        view.add = g.channel_transform_add[channel_index];
+    } else if (view.kind == TransformRuntimeKind::CachedFormula) {
+        ensure_transformed_channel_cache(channel_index);
+        view.cache = &g.transformed_channel_cache[channel_index];
     }
-    if (kind == TransformRuntimeKind::Affine) {
-        const double mul = g.channel_transform_mul[channel_index];
-        const double add = g.channel_transform_add[channel_index];
-        for (std::size_t i = 0; i < count; ++i) out[i] = static_cast<float>(col[lo + i] * mul + add);
-        return;
-    }
-    ensure_transformed_channel_cache(channel_index);
-    const auto& cache = g.transformed_channel_cache[channel_index];
-    for (std::size_t i = 0; i < count; ++i) out[i] = static_cast<float>(cache[lo + i]);
+    return view;
 }
 
-// Auto-fit vertical range over the currently visible time window (with 5% pad).
-bool current_time_yrange(double& ymin, double& ymax) {
-    if (!has_data()) return false;
+inline double channel_render_value(const ChannelRenderView& view, std::size_t sample_index) {
+    if (!view.raw || sample_index >= view.raw->size()) return std::nan("");
+    if (view.cache) return (*view.cache)[sample_index];
+    const double raw = (*view.raw)[sample_index];
+    if (view.kind == TransformRuntimeKind::Affine) return raw * view.mul + view.add;
+    return raw;
+}
+
+bool any_visible_channel() {
+    for (char visible : g.visible) {
+        if (visible) return true;
+    }
+    return false;
+}
+
+std::size_t light_mode_render_stride(std::size_t sample_count, std::size_t target_samples) {
+    if (!g.light_mode || target_samples == 0 || sample_count <= target_samples) return 1;
+    return (sample_count + target_samples - 1) / target_samples;
+}
+
+bool current_time_yrange_window(std::size_t lo, std::size_t hi, double& ymin, double& ymax) {
+    if (!has_data() || hi <= lo) return false;
+    if (!any_visible_channel()) {
+        ymin = -1.0;
+        ymax = 1.0;
+        return true;
+    }
     ensure_channel_formula_vectors();
-    const std::vector<double>& t = g.ds.time;
-    const std::size_t n = t.size();
-    std::size_t lo = static_cast<std::size_t>(
-        std::lower_bound(t.begin(), t.end(), g.win_start) - t.begin());
-    std::size_t hi = static_cast<std::size_t>(
-        std::upper_bound(t.begin(), t.end(), g.win_end) - t.begin());
-    if (lo > 0) --lo;
-    if (hi < n) ++hi;
+    const std::size_t stride = light_mode_render_stride(hi - lo, 250000);
     ymin = 1e300; ymax = -1e300;
     for (std::size_t c = 0; c < g.ds.channel_count(); ++c) {
         if (!g.visible[c]) continue;
-        const auto& col = g.ds.channels[c];
-        const TransformRuntimeKind kind = (c < g.channel_transform_kind.size())
-            ? g.channel_transform_kind[c]
-            : TransformRuntimeKind::Identity;
-        const std::vector<double>* cache = nullptr;
-        double mul = 1.0;
-        double add = 0.0;
-        if (kind == TransformRuntimeKind::Affine) {
-            mul = g.channel_transform_mul[c];
-            add = g.channel_transform_add[c];
-        } else if (kind == TransformRuntimeKind::CachedFormula) {
-            ensure_transformed_channel_cache(c);
-            cache = &g.transformed_channel_cache[c];
-        }
-        for (std::size_t i = lo; i < hi; ++i) {
-            const double v = cache ? (*cache)[i]
-                                   : (kind == TransformRuntimeKind::Affine ? (col[i] * mul + add) : col[i]);
+        const ChannelRenderView view = make_channel_render_view(c);
+        for (std::size_t i = lo; i < hi; i += stride) {
+            const double v = channel_render_value(view, i);
             if (std::isnan(v)) continue;
             if (v < ymin) ymin = v;
             if (v > ymax) ymax = v;
+        }
+        if (stride > 1) {
+            const std::size_t last = hi - 1;
+            const double v = channel_render_value(view, last);
+            if (!std::isnan(v)) {
+                if (v < ymin) ymin = v;
+                if (v > ymax) ymax = v;
+            }
         }
     }
     if (ymin > ymax) { ymin = -1; ymax = 1; }
@@ -3668,10 +3799,24 @@ bool current_time_yrange(double& ymin, double& ymax) {
     return true;
 }
 
+// Auto-fit vertical range over the currently visible time window (with 5% pad).
+bool current_time_yrange(double& ymin, double& ymax) {
+    if (!has_data()) return false;
+    const std::vector<double>& t = g.ds.time;
+    const std::size_t n = t.size();
+    std::size_t lo = static_cast<std::size_t>(
+        std::lower_bound(t.begin(), t.end(), g.win_start) - t.begin());
+    std::size_t hi = static_cast<std::size_t>(
+        std::upper_bound(t.begin(), t.end(), g.win_end) - t.begin());
+    if (lo > 0) --lo;
+    if (hi < n) ++hi;
+    return current_time_yrange_window(lo, hi, ymin, ymax);
+}
+
 // Auto-fit amplitude range over the currently visible FFT window (with 5% pad).
 bool current_freq_yrange(double& ymin, double& ymax) {
     if (!g.freq_mode) return false;
-    if (!g.spec_valid || g.spec.freqs.size() < 2) return false;
+    if (!ensure_current_spectrum() || g.spec.freqs.size() < 2) return false;
     ymin = 0.0;
     ymax = 0.0;
     std::size_t klo = static_cast<std::size_t>(
@@ -3681,7 +3826,7 @@ bool current_freq_yrange(double& ymin, double& ymax) {
     if (klo > 0) --klo;
     if (khi < g.spec.freqs.size()) ++khi;
     for (std::size_t j = 0; j < g.spec.amp.size(); ++j) {
-        int ci = channel_index_by_name(g.spec.names[j]);
+        const int ci = (j < g.spec_channel_indices.size()) ? g.spec_channel_indices[j] : -1;
         if (ci < 0 || !g.visible[ci]) continue;
         for (std::size_t k = klo; k < khi; ++k) {
             if (g.spec.amp[j][k] > ymax) ymax = g.spec.amp[j][k];
@@ -3691,6 +3836,19 @@ bool current_freq_yrange(double& ymin, double& ymax) {
     const double pad = ymax * 0.05;
     ymax += pad;
     return true;
+}
+
+double visible_spectrum_ymax() {
+    if (!ensure_current_spectrum()) return 0.0;
+    double ymax = 0.0;
+    for (std::size_t j = 0; j < g.spec.amp.size(); ++j) {
+        const int ci = (j < g.spec_channel_indices.size()) ? g.spec_channel_indices[j] : -1;
+        if (ci < 0 || !g.visible[ci]) continue;
+        for (double v : g.spec.amp[j]) {
+            if (v > ymax) ymax = v;
+        }
+    }
+    return ymax;
 }
 
 // ---- drawing -------------------------------------------------------------
@@ -4085,6 +4243,21 @@ void draw_measure(HDC dc) {
 
 // Render a polyline as a smooth Catmull-Rom spline through the given pixel
 // points. Purely visual: it curves *between* samples but never moves them.
+int catmull_rom_segment_steps(const POINT& a, const POINT& b) {
+    const int dist = max(std::abs(b.x - a.x), std::abs(b.y - a.y));
+    if (dist <= 2) return 1;
+    const int max_steps = g.light_mode ? 5 : 8;
+    return std::clamp(dist / 12 + 1, 1, max_steps);
+}
+
+bool should_render_smoothed_polyline(std::size_t point_count, int pixel_width) {
+    if (!g.visual_smooth || point_count < 2) return false;
+    const std::size_t soft_limit = g.light_mode
+        ? std::max<std::size_t>(static_cast<std::size_t>(pixel_width) * 3, 600)
+        : std::max<std::size_t>(static_cast<std::size_t>(pixel_width) * 6, 1800);
+    return point_count <= soft_limit;
+}
+
 void draw_catmull_rom(HDC dc, const std::vector<POINT>& pts) {
     if (pts.size() < 2) return;
     if (pts.size() == 2) {
@@ -4092,13 +4265,13 @@ void draw_catmull_rom(HDC dc, const std::vector<POINT>& pts) {
         LineTo(dc, pts[1].x, pts[1].y);
         return;
     }
-    const int steps = 12;
     MoveToEx(dc, pts[0].x, pts[0].y, nullptr);
     for (std::size_t i = 0; i + 1 < pts.size(); ++i) {
         const POINT& p0 = pts[i == 0 ? 0 : i - 1];
         const POINT& p1 = pts[i];
         const POINT& p2 = pts[i + 1];
         const POINT& p3 = pts[i + 2 < pts.size() ? i + 2 : i + 1];
+        const int steps = catmull_rom_segment_steps(p1, p2);
         for (int s = 1; s <= steps; ++s) {
             const double t = static_cast<double>(s) / steps;
             const double t2 = t * t, t3 = t2 * t;
@@ -4141,15 +4314,16 @@ TimeStepEstimate estimate_time_step(const std::vector<double>& time, std::size_t
 
 double effective_time_gap_step(const std::vector<double>& time, std::size_t lo, std::size_t hi) {
     const TimeStepEstimate local = estimate_time_step(time, lo, hi, 512);
-    const TimeStepEstimate global = estimate_time_step(time, 0, time.size(), 4096);
+    ensure_global_gap_step_ready();
+    const double global_step = g.cached_global_gap_step;
 
-    if (local.step > 0.0 && global.step > 0.0) {
-        if (local.count < 8) return global.step;
-        if (local.step > global.step * 8.0) return global.step;
-        return std::min(local.step, global.step * 4.0);
+    if (local.step > 0.0 && global_step > 0.0) {
+        if (local.count < 8) return global_step;
+        if (local.step > global_step * 8.0) return global_step;
+        return std::min(local.step, global_step * 4.0);
     }
     if (local.step > 0.0) return local.step;
-    if (global.step > 0.0) return global.step;
+    if (global_step > 0.0) return global_step;
     return 0.0;
 }
 
@@ -4167,7 +4341,7 @@ void draw_time(HDC dc, const RECT& p) {
 
     // Vertical range: auto-fit to the visible window, or frozen when locked.
     double ymin, ymax;
-    current_time_yrange(ymin, ymax);
+    current_time_yrange_window(lo, hi, ymin, ymax);
     if (!g.auto_y) { ymin = g.y_lock_min; ymax = g.y_lock_max; }
 
     draw_axes(dc, p, g.win_start, g.win_end, ymin, ymax, g_str->plot_xlabel_time);
@@ -4209,10 +4383,15 @@ void draw_time(HDC dc, const RECT& p) {
         }
     }
 
-    static std::vector<float> series;
     static std::vector<float> cmin, cmax;
+    const bool visible_channels = any_visible_channel();
     const bool sparse = (hi - lo) <= static_cast<std::size_t>(pw) * 2;
-    const double gap_step = effective_time_gap_step(t, lo, hi);
+    const bool allow_smoothing = should_render_smoothed_polyline(hi - lo, pw);
+    const bool enable_gap_scan =
+        g.show_gap_markers &&
+        (!g.light_mode || visible_channels) &&
+        (hi - lo <= std::max<std::size_t>(static_cast<std::size_t>(pw) * 96, 220000));
+    const double gap_step = enable_gap_scan ? effective_time_gap_step(t, lo, hi) : 0.0;
     const double gap_threshold = (gap_step > 0.0)
         ? (gap_step * 64.0)
         : std::numeric_limits<double>::infinity();
@@ -4224,7 +4403,7 @@ void draw_time(HDC dc, const RECT& p) {
         long long estimated_missing_samples = 0;
     };
     std::vector<TimeGapAnnotation> gap_annotations;
-    if (std::isfinite(gap_threshold)) {
+    if (enable_gap_scan && std::isfinite(gap_threshold)) {
         for (std::size_t i = std::max<std::size_t>(lo + 1, 1); i < hi; ++i) {
             const double dt = t[i] - t[i - 1];
             if (!std::isfinite(dt) || dt <= gap_threshold) continue;
@@ -4278,9 +4457,19 @@ void draw_time(HDC dc, const RECT& p) {
         DeleteObject(gap_brush);
     }
 
+    if (g.light_mode && !visible_channels) {
+        SelectClipRgn(dc, nullptr);
+        DeleteObject(clip);
+        g_legend_items.clear();
+        g_legend_box = {0, 0, 0, 0};
+        g.vx0 = g.win_start; g.vx1 = g.win_end; g.vy0 = ymin; g.vy1 = ymax;
+        g.vrect = p; g.vvalid = true;
+        return;
+    }
+
     for (std::size_t c = 0; c < g.ds.channel_count(); ++c) {
         if (!g.visible[c]) continue;
-        build_series(c, lo, hi, series);
+        const ChannelRenderView view = make_channel_render_view(c);
         HPEN pen = CreatePen(PS_SOLID, 1, channel_color(c));
         HGDIOBJ old = SelectObject(dc, pen);
 
@@ -4288,8 +4477,9 @@ void draw_time(HDC dc, const RECT& p) {
             // Collect contiguous (non-NaN) runs, then draw each as straight
             // segments or a visual spline. NaN gaps break the line.
             std::vector<POINT> run;
+            run.reserve(std::min<std::size_t>(hi - lo, 2048));
             auto flush = [&]() {
-                if (g.visual_smooth) {
+                if (allow_smoothing) {
                     draw_catmull_rom(dc, run);
                 } else {
                     for (std::size_t k = 0; k < run.size(); ++k) {
@@ -4300,7 +4490,7 @@ void draw_time(HDC dc, const RECT& p) {
                 run.clear();
             };
             for (std::size_t i = lo; i < hi; ++i) {
-                const float v = series[i - lo];
+                const double v = channel_render_value(view, i);
                 if (std::isnan(v)) { flush(); continue; }
                 if (!run.empty() && i > lo) {
                     const double dt = t[i] - t[i - 1];
@@ -4312,12 +4502,12 @@ void draw_time(HDC dc, const RECT& p) {
 
             // With visual smoothing on and few points in view, mark the real
             // samples so it's clear the curve only interpolates between them.
-            if (g.visual_smooth && (hi - lo) <= 400) {
+            if (allow_smoothing && (hi - lo) <= 400) {
                 HBRUSH dot = CreateSolidBrush(channel_color(c));
                 HGDIOBJ ob = SelectObject(dc, dot);
                 HGDIOBJ opn = SelectObject(dc, GetStockObject(NULL_PEN));
                 for (std::size_t i = lo; i < hi; ++i) {
-                    const float v = series[i - lo];
+                    const double v = channel_render_value(view, i);
                     if (std::isnan(v)) continue;
                     const int px = mapx(t[i]), py = mapy(v);
                     Ellipse(dc, px - 2, py - 2, px + 3, py + 3);
@@ -4331,13 +4521,25 @@ void draw_time(HDC dc, const RECT& p) {
             cmax.resize(pw, -1e30f);
             std::fill(cmin.begin(), cmin.end(), 1e30f);
             std::fill(cmax.begin(), cmax.end(), -1e30f);
-            for (std::size_t i = lo; i < hi; ++i) {
-                const float v = series[i - lo];
+            const std::size_t dense_stride = light_mode_render_stride(hi - lo, static_cast<std::size_t>(pw) * 96);
+            for (std::size_t i = lo; i < hi; i += dense_stride) {
+                const float v = static_cast<float>(channel_render_value(view, i));
                 if (std::isnan(v)) continue;
                 int cxp = mapx(t[i]) - p.left;
                 if (cxp < 0 || cxp >= pw) continue;
                 if (v < cmin[cxp]) cmin[cxp] = v;
                 if (v > cmax[cxp]) cmax[cxp] = v;
+            }
+            if (dense_stride > 1) {
+                const std::size_t last = hi - 1;
+                const float v = static_cast<float>(channel_render_value(view, last));
+                if (!std::isnan(v)) {
+                    int cxp = mapx(t[last]) - p.left;
+                    if (cxp >= 0 && cxp < pw) {
+                        if (v < cmin[cxp]) cmin[cxp] = v;
+                        if (v > cmax[cxp]) cmax[cxp] = v;
+                    }
+                }
             }
             int prev_x = -1, prev_y = 0;
             for (int cxp = 0; cxp < pw; ++cxp) {
@@ -4575,8 +4777,7 @@ void draw_time(HDC dc, const RECT& p) {
 }
 
 void draw_freq(HDC dc, const RECT& p) {
-    if (!g.spec_valid && !g.spec_source_valid) compute_spectrum();
-    if (!g.spec_valid || g.spec.freqs.size() < 2) {
+    if (!ensure_current_spectrum() || g.spec.freqs.size() < 2) {
         draw_axes(dc, p, 0, 1, 0, 1, g_str->plot_xlabel_freq);
         return;
     }
@@ -4591,7 +4792,7 @@ void draw_freq(HDC dc, const RECT& p) {
 
     double ymax = 0.0;
     for (std::size_t j = 0; j < g.spec.amp.size(); ++j) {
-        int ci = channel_index_by_name(g.spec.names[j]);
+        const int ci = (j < g.spec_channel_indices.size()) ? g.spec_channel_indices[j] : -1;
         if (ci < 0 || !g.visible[ci]) continue;
         for (std::size_t k = klo; k < khi; ++k)
             if (g.spec.amp[j][k] > ymax) ymax = g.spec.amp[j][k];
@@ -4606,36 +4807,89 @@ void draw_freq(HDC dc, const RECT& p) {
     const double fspan = f1 - f0;
     auto mapx = [&](double ff) { return p.left + static_cast<int>((ff - f0) / fspan * pw); };
     auto mapy = [&](double yy) { return p.bottom - static_cast<int>(yy / ytop * ph); };
+    const std::size_t visible_bins = khi > klo ? (khi - klo) : 0;
+    const bool sparse = visible_bins <= static_cast<std::size_t>(pw) * 2;
+    const bool allow_smoothing = should_render_smoothed_polyline(visible_bins, pw);
 
     HRGN clip = CreateRectRgn(p.left + 1, p.top + 1, p.right, p.bottom);
     SelectClipRgn(dc, clip);
 
+    static std::vector<float> cmin, cmax;
     for (std::size_t j = 0; j < g.spec.amp.size(); ++j) {
-        int ci = channel_index_by_name(g.spec.names[j]);
+        const int ci = (j < g.spec_channel_indices.size()) ? g.spec_channel_indices[j] : -1;
         if (ci < 0 || !g.visible[ci]) continue;
         HPEN pen = CreatePen(PS_SOLID, 1, channel_color(ci));
         HGDIOBJ old = SelectObject(dc, pen);
         const auto& a = g.spec.amp[j];
-        std::vector<POINT> pts;
-        for (std::size_t k = klo; k < khi; ++k)
-            pts.push_back(POINT{mapx(f[k]), mapy(a[k])});
-        if (g.visual_smooth && pts.size() >= 2) {
-            draw_catmull_rom(dc, pts);
-            // Mark real samples when few are visible.
-            if (pts.size() <= 400) {
-                HBRUSH dot = CreateSolidBrush(channel_color(ci));
-                HGDIOBJ ob = SelectObject(dc, dot);
-                HGDIOBJ opn = SelectObject(dc, GetStockObject(NULL_PEN));
-                for (const auto& pt : pts)
-                    Ellipse(dc, pt.x - 2, pt.y - 2, pt.x + 3, pt.y + 3);
-                SelectObject(dc, opn);
-                SelectObject(dc, ob);
-                DeleteObject(dot);
+        if (sparse) {
+            if (allow_smoothing) {
+                std::vector<POINT> pts;
+                pts.reserve(visible_bins);
+                for (std::size_t k = klo; k < khi; ++k) {
+                    pts.push_back(POINT{mapx(f[k]), mapy(a[k])});
+                }
+                draw_catmull_rom(dc, pts);
+                // Mark real samples when few are visible.
+                if (pts.size() <= 400) {
+                    HBRUSH dot = CreateSolidBrush(channel_color(ci));
+                    HGDIOBJ ob = SelectObject(dc, dot);
+                    HGDIOBJ opn = SelectObject(dc, GetStockObject(NULL_PEN));
+                    for (const auto& pt : pts)
+                        Ellipse(dc, pt.x - 2, pt.y - 2, pt.x + 3, pt.y + 3);
+                    SelectObject(dc, opn);
+                    SelectObject(dc, ob);
+                    DeleteObject(dot);
+                }
+            } else {
+                bool started = false;
+                for (std::size_t k = klo; k < khi; ++k) {
+                    const int x = mapx(f[k]);
+                    const int y = mapy(a[k]);
+                    if (!started) {
+                        MoveToEx(dc, x, y, nullptr);
+                        started = true;
+                    } else {
+                        LineTo(dc, x, y);
+                    }
+                }
             }
         } else {
-            for (std::size_t k = 0; k < pts.size(); ++k) {
-                if (k == 0) MoveToEx(dc, pts[k].x, pts[k].y, nullptr);
-                else LineTo(dc, pts[k].x, pts[k].y);
+            cmin.resize(pw, 1e30f);
+            cmax.resize(pw, -1e30f);
+            std::fill(cmin.begin(), cmin.end(), 1e30f);
+            std::fill(cmax.begin(), cmax.end(), -1e30f);
+            const std::size_t dense_stride = light_mode_render_stride(visible_bins, static_cast<std::size_t>(pw) * 128);
+            for (std::size_t k = klo; k < khi; k += dense_stride) {
+                const float v = static_cast<float>(a[k]);
+                int cxp = mapx(f[k]) - p.left;
+                if (cxp < 0 || cxp >= pw) continue;
+                if (v < cmin[cxp]) cmin[cxp] = v;
+                if (v > cmax[cxp]) cmax[cxp] = v;
+            }
+            if (dense_stride > 1 && khi > klo) {
+                const std::size_t last = khi - 1;
+                const float v = static_cast<float>(a[last]);
+                int cxp = mapx(f[last]) - p.left;
+                if (cxp >= 0 && cxp < pw) {
+                    if (v < cmin[cxp]) cmin[cxp] = v;
+                    if (v > cmax[cxp]) cmax[cxp] = v;
+                }
+            }
+            int prev_x = -1;
+            int prev_y = 0;
+            for (int cxp = 0; cxp < pw; ++cxp) {
+                if (cmax[cxp] < -1e29f) continue;
+                const int x = p.left + cxp;
+                const int yhi = mapy(cmax[cxp]);
+                const int ylo = mapy(std::max(0.0f, cmin[cxp]));
+                MoveToEx(dc, x, ylo, nullptr);
+                LineTo(dc, x, yhi - 1);
+                if (prev_x >= 0 && x - prev_x <= 2) {
+                    MoveToEx(dc, prev_x, prev_y, nullptr);
+                    LineTo(dc, x, (yhi + ylo) / 2);
+                }
+                prev_x = x;
+                prev_y = (yhi + ylo) / 2;
             }
         }
         SelectObject(dc, old);
@@ -4651,6 +4905,8 @@ void draw_freq(HDC dc, const RECT& p) {
 
 void draw_chart(HDC dc, const RECT& p) {
     if (!has_data()) {
+        g_legend_items.clear();
+        g_legend_box = {0, 0, 0, 0};
         g.visible_gap_markers.clear();
         SetTextAlign(dc, TA_CENTER | TA_BASELINE);
         SetTextColor(dc, g_theme->text_secondary);
@@ -4672,14 +4928,68 @@ void draw_chart(HDC dc, const RECT& p) {
     draw_measure(dc);
 }
 
+void release_backbuffer() {
+    if (g.backbuffer_dc && g.backbuffer_prev_bmp) {
+        SelectObject(g.backbuffer_dc, g.backbuffer_prev_bmp);
+        g.backbuffer_prev_bmp = nullptr;
+    }
+    if (g.backbuffer_bmp) {
+        DeleteObject(g.backbuffer_bmp);
+        g.backbuffer_bmp = nullptr;
+    }
+    if (g.backbuffer_dc) {
+        DeleteDC(g.backbuffer_dc);
+        g.backbuffer_dc = nullptr;
+    }
+    g.backbuffer_w = 0;
+    g.backbuffer_h = 0;
+}
+
+bool ensure_backbuffer(HDC hdc, int width, int height) {
+    if (width <= 0 || height <= 0) return false;
+    if (g.backbuffer_dc && g.backbuffer_bmp &&
+        g.backbuffer_w == width && g.backbuffer_h == height) {
+        return true;
+    }
+
+    release_backbuffer();
+
+    g.backbuffer_dc = CreateCompatibleDC(hdc);
+    if (!g.backbuffer_dc) return false;
+
+    g.backbuffer_bmp = CreateCompatibleBitmap(hdc, width, height);
+    if (!g.backbuffer_bmp) {
+        release_backbuffer();
+        return false;
+    }
+
+    g.backbuffer_prev_bmp = static_cast<HBITMAP>(SelectObject(g.backbuffer_dc, g.backbuffer_bmp));
+    g.backbuffer_w = width;
+    g.backbuffer_h = height;
+    return true;
+}
+
 void on_paint(HDC hdc) {
     RECT rc;
     GetClientRect(g.main, &rc);
     const int cw = rc.right, ch = rc.bottom;
 
-    HDC mem = CreateCompatibleDC(hdc);
-    HBITMAP bmp = CreateCompatibleBitmap(hdc, cw, ch);
-    HGDIOBJ obmp = SelectObject(mem, bmp);
+    HDC mem = nullptr;
+    HBITMAP temp_bmp = nullptr;
+    HBITMAP temp_prev_bmp = nullptr;
+    const bool using_persistent_backbuffer = ensure_backbuffer(hdc, cw, ch);
+    if (using_persistent_backbuffer) {
+        mem = g.backbuffer_dc;
+    } else {
+        mem = CreateCompatibleDC(hdc);
+        if (!mem) return;
+        temp_bmp = CreateCompatibleBitmap(hdc, cw, ch);
+        if (!temp_bmp) {
+            DeleteDC(mem);
+            return;
+        }
+        temp_prev_bmp = static_cast<HBITMAP>(SelectObject(mem, temp_bmp));
+    }
 
     HBRUSH bg = CreateSolidBrush(g_theme->bg_main);
     FillRect(mem, &rc, bg);
@@ -4687,9 +4997,11 @@ void on_paint(HDC hdc) {
 
     if (welcome_visible()) {
         BitBlt(hdc, 0, 0, cw, ch, mem, 0, 0, SRCCOPY);
-        SelectObject(mem, obmp);
-        DeleteObject(bmp);
-        DeleteDC(mem);
+        if (!using_persistent_backbuffer) {
+            SelectObject(mem, temp_prev_bmp);
+            DeleteObject(temp_bmp);
+            DeleteDC(mem);
+        }
         return;
     }
 
@@ -4796,9 +5108,11 @@ void on_paint(HDC hdc) {
     }
 
     BitBlt(hdc, 0, 0, cw, ch, mem, 0, 0, SRCCOPY);
-    SelectObject(mem, obmp);
-    DeleteObject(bmp);
-    DeleteDC(mem);
+    if (!using_persistent_backbuffer) {
+        SelectObject(mem, temp_prev_bmp);
+        DeleteObject(temp_bmp);
+        DeleteDC(mem);
+    }
 }
 
 // ---- PNG export (GDI+) ---------------------------------------------------
@@ -4862,14 +5176,60 @@ std::string current_channel_label(std::size_t ci) {
     return "Channel_" + std::to_string(ci + 1);
 }
 
+void invalidate_formula_runtime() {
+    g.formula_runtime_dirty = true;
+    invalidate_transformed_channel_cache();
+}
+
+void invalidate_formula_runtime_channel(std::size_t channel_index) {
+    g.formula_runtime_dirty = true;
+    if (channel_index < g.transformed_channel_cache_valid.size()) {
+        g.transformed_channel_cache_valid[channel_index] = 0;
+    } else {
+        invalidate_transformed_channel_cache();
+    }
+}
+
 void invalidate_transformed_channel_cache() {
     const std::size_t n = g.ds.channel_count();
     g.transformed_channel_cache.resize(n);
     g.transformed_channel_cache_valid.assign(n, 0);
 }
 
+void ensure_channel_formula_storage() {
+    const std::size_t n = g.ds.channel_count();
+    if (g.channel_formulas.size() != n) g.channel_formulas.assign(n, default_channel_formula_text());
+    if (g.channel_formula_rpn.size() != n) g.channel_formula_rpn.assign(n, {});
+    if (g.channel_formula_identity.size() != n) g.channel_formula_identity.assign(n, 1);
+    if (g.channel_transform_kind.size() != n) g.channel_transform_kind.assign(n, TransformRuntimeKind::Identity);
+    if (g.channel_transform_mul.size() != n) g.channel_transform_mul.assign(n, 1.0);
+    if (g.channel_transform_add.size() != n) g.channel_transform_add.assign(n, 0.0);
+    if (g.transformed_channel_cache.size() != n || g.transformed_channel_cache_valid.size() != n) {
+        invalidate_transformed_channel_cache();
+    }
+}
+
+void ensure_channel_formulas_loaded() {
+    if (!g.formula_ini_deferred) return;
+    g.formula_ini_deferred = false;
+    load_channel_formulas_from_ini();
+}
+
 void ensure_channel_formula_vectors() {
     const std::size_t n = g.ds.channel_count();
+    ensure_channel_formula_storage();
+    const bool vectors_ready =
+        g.channel_formulas.size() == n &&
+        g.channel_formula_rpn.size() == n &&
+        g.channel_formula_identity.size() == n &&
+        g.channel_transform_kind.size() == n &&
+        g.channel_transform_mul.size() == n &&
+        g.channel_transform_add.size() == n &&
+        g.transformed_channel_cache.size() == n &&
+        g.transformed_channel_cache_valid.size() == n;
+    if (!g.formula_runtime_dirty && vectors_ready) return;
+
+    ensure_channel_formulas_loaded();
     if (g.global_formula.empty()) g.global_formula = default_channel_formula_text();
     if (g.global_formula_rpn.empty()) {
         std::wstring error;
@@ -4884,12 +5244,6 @@ void ensure_channel_formula_vectors() {
     g.global_formula_affine = global_affine.valid;
     g.global_formula_mul = global_affine.valid ? global_affine.mul : 1.0;
     g.global_formula_add = global_affine.valid ? global_affine.add : 0.0;
-    if (g.channel_formulas.size() != n) g.channel_formulas.assign(n, default_channel_formula_text());
-    if (g.channel_formula_rpn.size() != n) g.channel_formula_rpn.assign(n, {});
-    if (g.channel_formula_identity.size() != n) g.channel_formula_identity.assign(n, 1);
-    if (g.channel_transform_kind.size() != n) g.channel_transform_kind.assign(n, TransformRuntimeKind::Identity);
-    if (g.channel_transform_mul.size() != n) g.channel_transform_mul.assign(n, 1.0);
-    if (g.channel_transform_add.size() != n) g.channel_transform_add.assign(n, 0.0);
     bool has_non_identity = !g.global_formula_identity;
     bool has_non_affine = false;
     for (std::size_t i = 0; i < n; ++i) {
@@ -4919,9 +5273,7 @@ void ensure_channel_formula_vectors() {
     }
     g.has_non_identity_formula = has_non_identity;
     g.has_non_affine_formula = has_non_affine;
-    if (g.transformed_channel_cache.size() != n || g.transformed_channel_cache_valid.size() != n) {
-        invalidate_transformed_channel_cache();
-    }
+    g.formula_runtime_dirty = false;
 }
 
 void ensure_transformed_channel_cache(std::size_t channel_index) {
@@ -4993,7 +5345,7 @@ void reset_channel_transform(std::size_t ci) {
         std::wstring error;
         compile_formula_rpn(g.channel_formulas[ci], g.channel_formula_rpn[ci], error);
     }
-    invalidate_transformed_channel_cache();
+    invalidate_formula_runtime_channel(ci);
     ensure_channel_formula_vectors();
 }
 
@@ -5027,10 +5379,8 @@ void on_signal_transform_changed(bool preserve_history = false) {
     g.auto_y = true;
     g.auto_y_amp = true;
     if (g.autoy) SendMessageW(g.autoy, BM_SETCHECK, BST_CHECKED, 0);
-    g.spec_valid = false;
-    g.spec = lvm::Spectrum{};
-    g.spec_source_valid = false;
-    compute_spectrum_from_current_source();
+    clear_spectrum_cache_state();
+    if (g.freq_mode) compute_spectrum();
     sync_menu();
     set_status();
     InvalidateRect(g.main, nullptr, TRUE);
@@ -5043,11 +5393,11 @@ bool save_csv(const std::wstring& path) {
     if (!out) return false;
     ensure_channel_formula_vectors();
     if (g.freq_mode) {
-        if (!g.spec_valid) return false;
+        if (!ensure_current_spectrum()) return false;
         std::vector<std::size_t> cols;
         out << g_str->csv_freq;
         for (std::size_t j = 0; j < g.spec.amp.size(); ++j) {
-            int ci = channel_index_by_name(g.spec.names[j]);
+            const int ci = (j < g.spec_channel_indices.size()) ? g.spec_channel_indices[j] : -1;
             if (ci >= 0 && g.visible[ci]) { out << "," << current_channel_label(static_cast<std::size_t>(ci)); cols.push_back(j); }
         }
         out << "\n";
@@ -5080,11 +5430,11 @@ bool save_txt_view(const std::wstring& path) {
     if (!out) return false;
     ensure_channel_formula_vectors();
     if (g.freq_mode) {
-        if (!g.spec_valid) return false;
+        if (!ensure_current_spectrum()) return false;
         std::vector<std::size_t> cols;
         out << "Frequency";
         for (std::size_t j = 0; j < g.spec.amp.size(); ++j) {
-            int ci = channel_index_by_name(g.spec.names[j]);
+            const int ci = (j < g.spec_channel_indices.size()) ? g.spec_channel_indices[j] : -1;
             if (ci >= 0 && g.visible[ci]) { out << "\t" << current_channel_label(static_cast<std::size_t>(ci)); cols.push_back(j); }
         }
         out << "\r\n";
@@ -5228,13 +5578,13 @@ bool snap_to_nearest_target(double& dx, double& dy, int* out_channel = nullptr) 
     int best_ci = -1;
 
     if (g.freq_mode) {
-        if (!g.spec_valid || g.spec.freqs.empty() || g.vx1 <= g.vx0 || g.vy1 <= g.vy0) return false;
+        if (!ensure_current_spectrum() || g.spec.freqs.empty() || g.vx1 <= g.vx0 || g.vy1 <= g.vy0) return false;
         const auto& f = g.spec.freqs;
         std::size_t lo = static_cast<std::size_t>(std::lower_bound(f.begin(), f.end(), g.vx0) - f.begin());
         std::size_t hi = static_cast<std::size_t>(std::upper_bound(f.begin(), f.end(), g.vx1) - f.begin());
         if (lo >= hi) return false;
         for (std::size_t j = 0; j < g.spec.amp.size(); ++j) {
-            const int ci = channel_index_by_name(g.spec.names[j]);
+            const int ci = (j < g.spec_channel_indices.size()) ? g.spec_channel_indices[j] : -1;
             if (ci < 0 || !g.visible[ci]) continue;
             for (std::size_t k = lo; k < hi; ++k) {
                 const double x = f[k];
@@ -5408,7 +5758,7 @@ void write_ini_double(const wchar_t* section, const wchar_t* key, double value) 
 }
 
 void load_channel_formulas_from_ini() {
-    ensure_channel_formula_vectors();
+    ensure_channel_formula_storage();
     wchar_t global_buf[512]{};
     GetPrivateProfileStringW(L"transform", L"global_formula", default_channel_formula_text().c_str(), global_buf, 512, g_config_path.c_str());
     g.global_formula = normalize_formula_text(global_buf);
@@ -5435,7 +5785,7 @@ void load_channel_formulas_from_ini() {
             compile_formula_rpn(g.channel_formulas[i], g.channel_formula_rpn[i], error);
         }
     }
-    invalidate_transformed_channel_cache();
+    invalidate_formula_runtime();
     ensure_channel_formula_vectors();
 }
 
@@ -5492,6 +5842,7 @@ void load_runtime_settings() {
 
 void save_runtime_settings() {
     if (g_config_path.empty()) g_config_path = app_config_path();
+    ensure_channel_formulas_loaded();
 
     WritePrivateProfileStringW(L"ui", L"language", (g_str == &kEn) ? L"en" : L"ru", g_config_path.c_str());
     WritePrivateProfileStringW(L"ui", L"smoothing", g.visual_smooth ? L"1" : L"0", g_config_path.c_str());
@@ -5770,9 +6121,7 @@ void layout_welcome_controls(HWND hwnd) {
     place(IDW_THEME_DARK, ax + aw - theme_w, ay, theme_w, segment_button_h);
     ay += segment_button_h + (layout.compact ? 12 : 16);
     place(IDW_LIGHT_MODE, ax, ay, aw, 28);
-    ay += layout.compact ? 30 : 34;
-    place(IDW_LIGHT_HINT, ax, ay, aw, layout.compact ? 42 : (layout.stacked ? 64 : 60));
-    ay += layout.compact ? 50 : (layout.stacked ? 74 : 70);
+    ay += layout.compact ? 38 : 42;
     place(IDW_ACTIONS_TITLE, ax, ay, aw, layout.compact ? 20 : 24);
     ay += layout.compact ? 28 : 34;
     place(IDC_PTSETTINGS, ax, ay, aw, action_button_h);
@@ -7127,14 +7476,14 @@ void assign_formula_to_channel(std::size_t channel_index, const std::wstring& fo
     if (channel_index >= g.channel_formulas.size() || channel_index >= g.channel_formula_rpn.size()) return;
     g.channel_formulas[channel_index] = formula;
     g.channel_formula_rpn[channel_index] = compiled;
-    invalidate_transformed_channel_cache();
+    invalidate_formula_runtime_channel(channel_index);
     ensure_channel_formula_vectors();
 }
 
 void assign_global_formula(const std::wstring& formula, const std::vector<FormulaToken>& compiled) {
     g.global_formula = formula;
     g.global_formula_rpn = compiled;
-    invalidate_transformed_channel_cache();
+    invalidate_formula_runtime();
     ensure_channel_formula_vectors();
 }
 
@@ -7190,10 +7539,8 @@ void refresh_settings_controls() {
     set_toggle_checked(GetDlgItem(g.settings_wnd, IDC_SET_LIGHT_MODE), g.light_mode);
     set_toggle_checked(GetDlgItem(g.settings_wnd, IDC_SET_GAP_MARKERS), g.show_gap_markers);
     if (HWND gap = GetDlgItem(g.settings_wnd, IDC_SET_GAP_MARKERS)) SetWindowTextW(gap, gap_markers_toggle_text());
-    if (HWND hint = GetDlgItem(g.settings_wnd, IDC_SET_LIGHT_HINT)) SetWindowTextW(hint, g_str->light_mode_hint);
     populate_hotkey_list(g.settings_wnd);
     load_selected_hotkey_controls(g.settings_wnd);
-    refresh_side_panel_controls();
 }
 
 void rebuild_menu_bar() {
@@ -7232,24 +7579,23 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 return mk(L"BUTTON", text, BS_OWNERDRAW | WS_TABSTOP, x, y, w, h, id);
             };
             const bool en = (g_str == &kEn);
-            mk(L"BUTTON", en ? L"General" : L"Общие", BS_OWNERDRAW, 12, 10, 510, 166, IDC_SET_GROUP_GENERAL);
+            mk(L"BUTTON", en ? L"General" : L"Общие", BS_OWNERDRAW, 12, 10, 510, 138, IDC_SET_GROUP_GENERAL);
             mk(L"BUTTON", g_str->lang_ru, BS_OWNERDRAW, 28, 36, 110, 22, IDC_SET_LANG_RU);
             mk(L"BUTTON", g_str->lang_en, BS_OWNERDRAW, 144, 36, 110, 22, IDC_SET_LANG_EN);
             mkcheck(g_str->light_mode, 28, 70, 278, 28, IDC_SET_LIGHT_MODE);
-            mk(L"STATIC", g_str->light_mode_hint, SS_LEFT | SS_NOPREFIX, 28, 94, 468, 40, IDC_SET_LIGHT_HINT);
-            mkcheck(gap_markers_toggle_text(), 28, 136, 278, 28, IDC_SET_GAP_MARKERS);
+            mkcheck(gap_markers_toggle_text(), 28, 102, 278, 28, IDC_SET_GAP_MARKERS);
 
-            mk(L"BUTTON", en ? L"Hotkeys" : L"Горячие клавиши", BS_OWNERDRAW, 12, 186, 510, 188, IDC_SET_GROUP_HOTKEYS);
-            mk(L"LISTBOX", L"", LBS_NOTIFY | WS_VSCROLL | WS_BORDER, 24, 210, 240, 150, IDC_SET_HOTKEY_LIST);
-            mk(L"BUTTON", L"Ctrl", BS_OWNERDRAW, 284, 218, 70, 22, IDC_SET_HOTKEY_CTRL);
-            mk(L"BUTTON", L"Shift", BS_OWNERDRAW, 356, 218, 70, 22, IDC_SET_HOTKEY_SHIFT);
-            mk(L"BUTTON", L"Alt", BS_OWNERDRAW, 428, 218, 70, 22, IDC_SET_HOTKEY_ALT);
-            mk(L"STATIC", en ? L"Key:" : L"Клавиша:", SS_LEFT, 284, 250, 80, 20, 0);
-            HWND combo = mk(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_BORDER, 284, 270, 214, 260, IDC_SET_HOTKEY_KEY);
+            mk(L"BUTTON", en ? L"Hotkeys" : L"Горячие клавиши", BS_OWNERDRAW, 12, 158, 510, 188, IDC_SET_GROUP_HOTKEYS);
+            mk(L"LISTBOX", L"", LBS_NOTIFY | WS_VSCROLL | WS_BORDER, 24, 182, 240, 146, IDC_SET_HOTKEY_LIST);
+            mk(L"BUTTON", L"Ctrl", BS_OWNERDRAW, 284, 190, 70, 22, IDC_SET_HOTKEY_CTRL);
+            mk(L"BUTTON", L"Shift", BS_OWNERDRAW, 356, 190, 70, 22, IDC_SET_HOTKEY_SHIFT);
+            mk(L"BUTTON", L"Alt", BS_OWNERDRAW, 428, 190, 70, 22, IDC_SET_HOTKEY_ALT);
+            mk(L"STATIC", en ? L"Key:" : L"Клавиша:", SS_LEFT, 284, 222, 80, 20, 0);
+            HWND combo = mk(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_BORDER, 284, 242, 214, 260, IDC_SET_HOTKEY_KEY);
             populate_hotkey_key_combo(combo);
-            mk(L"BUTTON", en ? L"Apply" : L"Применить", BS_OWNERDRAW, 284, 308, 100, 28, IDC_SET_HOTKEY_APPLY);
-            mk(L"BUTTON", en ? L"Reset" : L"Сбросить", BS_OWNERDRAW, 398, 308, 100, 28, IDC_SET_HOTKEY_RESET);
-            mk(L"BUTTON", en ? L"Clear" : L"Очистить", BS_OWNERDRAW, 284, 342, 100, 28, IDC_SET_HOTKEY_CLEAR);
+            mk(L"BUTTON", en ? L"Apply" : L"Применить", BS_OWNERDRAW, 284, 280, 100, 28, IDC_SET_HOTKEY_APPLY);
+            mk(L"BUTTON", en ? L"Reset" : L"Сбросить", BS_OWNERDRAW, 398, 280, 100, 28, IDC_SET_HOTKEY_RESET);
+            mk(L"BUTTON", en ? L"Clear" : L"Очистить", BS_OWNERDRAW, 284, 314, 100, 28, IDC_SET_HOTKEY_CLEAR);
             populate_hotkey_list(hwnd);
             load_selected_hotkey_controls(hwnd);
             CheckRadioButton(hwnd, IDC_SET_LANG_RU, IDC_SET_LANG_EN, g_str == &kEn ? IDC_SET_LANG_EN : IDC_SET_LANG_RU);
@@ -7421,7 +7767,7 @@ void open_settings() {
         HINSTANCE inst = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(g.main, GWLP_HINSTANCE));
             g.settings_wnd = CreateWindowExW(
             WS_EX_TOOLWINDOW, L"LvmPtSettings", settings_window_title(),
-            WS_POPUP | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT, CW_USEDEFAULT, 540, 420,
+            WS_POPUP | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT, CW_USEDEFAULT, 540, 392,
             g.main, nullptr, inst, nullptr);
         if (!g.settings_wnd) return;
         RECT mr, sr;
@@ -7484,7 +7830,6 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDW_LIGHT_MODE)), inst, nullptr);
             SendMessageW(light_mode, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
             set_toggle_checked(light_mode, g.light_mode);
-            mkstatic(g_str->light_mode_hint, IDW_LIGHT_HINT, font);
             mkstatic(welcome_actions_title_text(), IDW_ACTIONS_TITLE, g.bold_font ? g.bold_font : font);
             mkbtn(settings_button_text(), IDC_PTSETTINGS);
             mkbtn(g_str->welcome_btn_hotkeys, IDM_HOTKEYS);
@@ -7615,7 +7960,7 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             HDC dc = reinterpret_cast<HDC>(wp);
             SetBkMode(dc, TRANSPARENT);
             int ctl_id = GetDlgCtrlID(reinterpret_cast<HWND>(lp));
-            if (ctl_id == IDW_SUBTITLE || ctl_id == IDW_VERSION || ctl_id == IDW_LIGHT_HINT) {
+            if (ctl_id == IDW_SUBTITLE || ctl_id == IDW_VERSION) {
                 SetTextColor(dc, g_theme->text_secondary);
             } else if (ctl_id == IDW_LANG_LABEL || ctl_id == IDW_THEME_LABEL || ctl_id == IDW_ACTIONS_TITLE) {
                 SetTextColor(dc, g_theme->accent);
@@ -7861,10 +8206,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 RECT rc;
                 GetClientRect(hwnd, &rc);
                 SetWindowPos(g.welcome_wnd, HWND_TOP, 0, 0, rc.right, rc.bottom, SWP_SHOWWINDOW);
-                redraw_window_with_children(g.welcome_wnd);
+                InvalidateRect(g.welcome_wnd, nullptr, FALSE);
                 return 0;
             }
-            redraw_window_with_children(hwnd);
+            InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         case WM_GETMINMAXINFO: {
             MINMAXINFO* m = reinterpret_cast<MINMAXINFO*>(lp);
@@ -8089,6 +8434,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     save_runtime_settings();
                     layout();
                     InvalidateRect(hwnd, nullptr, FALSE);
+                    return 0;
+                case IDC_SIDE_GLOBAL_FORMULA_EDIT:
+                case IDC_SIDE_FORMULA_EDIT:
+                    if (HIWORD(wp) == EN_SETFOCUS && g.formula_ini_deferred) {
+                        ensure_channel_formulas_loaded();
+                        load_side_transform_controls();
+                    }
                     return 0;
                 case IDC_SIDE_GLOBAL_FORMULA_APPLY: {
                     if (!has_data()) return 0;
@@ -8648,7 +9000,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (!g.freq_mode && g.show_gap_markers) {
                 const int gap_index = hit_test_gap_marker(mx, my);
                 if (gap_index >= 0) {
-                    show_gap_details_dialog(hwnd, gap_index);
+                    g.gap_click_pending = false;
+                    g.gap_click_index = -1;
+                    if (prepare_plot_drag(mx, my)) {
+                        g.gap_click_pending = true;
+                        g.gap_click_index = gap_index;
+                        SetCapture(hwnd);
+                    }
                     return 0;
                 }
             }
@@ -8771,36 +9129,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
                 return 0;
             }
-            double *lo, *hi, minb, maxb, minw;
-            if (!active_axis(lo, hi, minb, maxb, minw)) return 0;
+            if (!prepare_plot_drag(mx, my)) return 0;
+            g.gap_click_pending = false;
+            g.gap_click_index = -1;
             g.dragging = true;
-            g.drag_x = mx;
-            g.drag_y = my;
-            g.drag_lo = *lo;
-            g.drag_hi = *hi;
-            // Remember Y range for vertical panning.
-            if (g.freq_mode) {
-                if (g.auto_y_amp) {
-                    double ymax = 0.0;
-                    for (std::size_t j = 0; j < g.spec.amp.size(); ++j) {
-                        int ci = channel_index_by_name(g.spec.names[j]);
-                        if (ci < 0 || !g.visible[ci]) continue;
-                        for (auto v : g.spec.amp[j]) if (v > ymax) ymax = v;
-                    }
-                    if (ymax <= 0) ymax = 1.0;
-                    g.drag_y_hi = ymax * 1.08;
-                } else {
-                    g.drag_y_hi = g.y_amp_max;
-                }
-                g.drag_y_lo = 0.0;
-            } else {
-                if (g.auto_y) {
-                    current_time_yrange(g.drag_y_lo, g.drag_y_hi);
-                } else {
-                    g.drag_y_lo = g.y_lock_min;
-                    g.drag_y_hi = g.y_lock_max;
-                }
-            }
             SetCapture(hwnd);
             return 0;
         }
@@ -8843,6 +9175,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 RECT rc; GetClientRect(hwnd, &rc);
                 RECT sr = {0, rc.bottom - kBottomBar, rc.right, rc.bottom};
                 InvalidateRect(hwnd, &sr, FALSE);
+            }
+            if (g.gap_click_pending && !g.dragging) {
+                const int dx = GET_X_LPARAM(lp) - g.drag_x;
+                const int dy = GET_Y_LPARAM(lp) - g.drag_y;
+                if (std::abs(dx) >= 4 || std::abs(dy) >= 4) {
+                    g.gap_click_pending = false;
+                    g.gap_click_index = -1;
+                    g.dragging = true;
+                } else {
+                    return 0;
+                }
             }
             if (!g.dragging) return 0;
             double *lo, *hi, minb, maxb, minw;
@@ -8887,6 +9230,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
                 set_status();
                 InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (g.gap_click_pending) {
+                const int pending_gap_index = g.gap_click_index;
+                g.gap_click_pending = false;
+                g.gap_click_index = -1;
+                if (GetCapture() == hwnd) ReleaseCapture();
+                if (!g.freq_mode && g.show_gap_markers) {
+                    const int released_gap_index = hit_test_gap_marker(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
+                    if (released_gap_index >= 0 && released_gap_index == pending_gap_index) {
+                        show_gap_details_dialog(hwnd, released_gap_index);
+                    }
+                }
                 return 0;
             }
             if (g.dragging) { g.dragging = false; ReleaseCapture(); }
@@ -8934,6 +9290,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             save_app_settings();
             stop_play();
             KillTimer(hwnd, 2);
+            release_backbuffer();
             if (g.ui_font && g.ui_font != reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT)))
                 DeleteObject(g.ui_font);
             if (g.menu_font) DeleteObject(g.menu_font);
