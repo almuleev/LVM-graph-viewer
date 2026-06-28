@@ -46,11 +46,8 @@ $(TEST_BIN): tests/run_tests.cpp $(LIB_SRC) $(HDRS)
 # Win32 import libraries. On Windows you can also run: powershell ./build_gui.ps1
 gui: $(GUI_BIN)
 
-build_version.hpp:
-	@printf '#pragma once\n\n#ifndef APP_VERSION_W\n#define APP_VERSION_W L"$(VERSION)"\n#endif\n' > $@
-
-$(GUI_BIN): gui_main.cpp build_version.hpp $(LIB_SRC) $(HDRS)
-	$(CXX) $(CXXFLAGS) -municode -mwindows -o $@ gui_main.cpp $(LIB_SRC) $(LDFLAGS) -lcomdlg32 -lgdi32 -luser32 -lgdiplus -lcomctl32
+$(GUI_BIN): gui_main.cpp $(LIB_SRC) $(HDRS)
+	$(CXX) $(CXXFLAGS) -DAPP_VERSION_W=L\"$(VERSION)\" -municode -mwindows -o $@ gui_main.cpp $(LIB_SRC) $(LDFLAGS) -lcomdlg32 -lgdi32 -luser32 -lgdiplus -lcomctl32
 
 clean:
-	rm -f $(APP_OBJ) $(BIN) $(TEST_BIN) $(GUI_BIN) build_version.hpp
+	rm -f $(APP_OBJ) $(BIN) $(TEST_BIN) $(GUI_BIN)

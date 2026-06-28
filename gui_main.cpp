@@ -16,8 +16,8 @@
 //   - Keyboard shortcuts (see РЎРїСЂР°РІРєР° в†’ Р“РѕСЂСЏС‡РёРµ РєР»Р°РІРёС€Рё / F1).
 //
 // Build:
-//   g++ -std=c++17 -O2 -municode -static -mwindows -o LVM-graph-viewer-win-x64.exe \
-//       gui_main.cpp lvm_parser.cpp fft.cpp analysis.cpp \
+//   g++ -std=c++17 -O2 -municode -static -mwindows -o LVM-graph-viewer-win-x64.exe
+//       gui_main.cpp lvm_parser.cpp fft.cpp analysis.cpp
 //       -lcomdlg32 -lgdi32 -luser32 -lgdiplus -lcomctl32
 #ifndef UNICODE
 #define UNICODE
@@ -26,13 +26,15 @@
 #define _UNICODE
 #endif
 
+#ifndef APP_VERSION_W
+#define APP_VERSION_W L"v0.0.0"
+#endif
+
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
 #include <commdlg.h>
 #include <shellapi.h>
-
-#include "build_version.hpp"
 
 #include <algorithm>
 #include <array>
@@ -185,6 +187,7 @@ enum {
     IDC_SET_POINT_GROUP_NEW,
     IDC_SET_LIGHT_MODE = 5130,
     IDC_SET_LIGHT_HINT,
+    IDC_SET_GAP_MARKERS,
 
     IDC_SET_GROUP_GENERAL = 5150,
     IDC_SET_GROUP_TRANSFORM,
@@ -334,6 +337,14 @@ struct RangePromptState {
 
 RangePromptState g_range_prompt;
 
+struct HotkeysDialogState {
+    HWND wnd = nullptr;
+    HWND list = nullptr;
+    bool done = false;
+};
+
+HotkeysDialogState g_hotkeys_dialog;
+
 void update_theme_brushes() {
     if (g_panel_brush) DeleteObject(g_panel_brush);
     g_panel_brush = CreateSolidBrush(g_theme->bg_panel);
@@ -391,6 +402,8 @@ const int IDC_RANGE_PROMPT_START_EDIT = 6203;
 const int IDC_RANGE_PROMPT_END_EDIT = 6204;
 const int IDC_RANGE_PROMPT_OK = 6205;
 const int IDC_RANGE_PROMPT_CANCEL = 6206;
+const int IDC_HOTKEYS_DIALOG_LIST = 6207;
+const int IDC_HOTKEYS_DIALOG_CLOSE = 6208;
 
 // ---- string table --------------------------------------------------------
 struct Strings {
@@ -466,7 +479,7 @@ static const Strings kRu = {
     L"Вертикальная\tL", L"Горизонтальная\tH", L"Очистить",
     L"Добавить\tK", L"Очистить",
     L"Горячие клавиши…\tF1", L"О программе…",
-    L"Открыть", L"PNG", L"CSV", L"Время/Гц", L"▶ Play", L"⏸ Пауза", L"Точки", L"Сброс", L"Автомасштабирование", L"Настройки",
+    L"Открыть", L"PNG", L"CSV", L"Время/Гц", L"▶ Старт", L"⏸ Пауза", L"Точки", L"Сброс", L"АвтоМасштаб", L"Настройки",
     L"Каналы",
     L"Время", L"Гц (FFT)", L"Каналов", L"Точек", L"Окно", L"Y: авто", L"Y: фикс.", L"Линий", L"Маркеров", L"Скорость",
     L"Время, c", L"Частота, Гц",
@@ -723,9 +736,16 @@ struct App {
         int channel = -1;
     };
     std::vector<Marker> markers;
+    struct GapMarkerVisual {
+        RECT rect = {0, 0, 0, 0};
+        double duration = 0.0;
+        long long estimated_missing_samples = 0;
+    };
+    std::vector<GapMarkerVisual> visible_gap_markers;
     bool pending_marker = false;
     int active_marker = -1;
     bool light_mode = false;
+    bool show_gap_markers = true;
     bool current_file_partial = false;
     double light_mode_open_start = 0.0;
     double light_mode_open_end = 10.0;
@@ -892,6 +912,17 @@ SettingsSnapshot capture_settings_snapshot();
 bool settings_snapshot_differs(const SettingsSnapshot& a, const SettingsSnapshot& b);
 void apply_settings_snapshot(const SettingsSnapshot& snapshot);
 bool record_settings_change(const SettingsSnapshot& before);
+bool is_toggle_checked(HWND hwnd);
+void set_toggle_checked(HWND hwnd, bool checked);
+void toggle_checked_state(HWND hwnd);
+std::wstring time_gap_details_text(double duration, long long estimated_missing_samples);
+const wchar_t* time_gap_details_title();
+int hit_test_gap_marker(int x, int y);
+void show_gap_details_dialog(HWND owner, int gap_index);
+
+const wchar_t* gap_markers_toggle_text() {
+    return (g_str == &kEn) ? L"Show gap markers" : L"Показывать разрывы";
+}
 
 const wchar_t* side_global_formula_label_text() {
     return (g_str == &kEn) ? L"Global coefficient for all charts:" : L"Общий коэффициент для всех графиков:";
@@ -923,12 +954,6 @@ const wchar_t* point_group_visible_text() {
 
 const wchar_t* point_group_new_button_text() {
     return g_str == &kEn ? L"Start new group" : L"Новая группа";
-}
-
-const wchar_t* point_group_hint_text() {
-    return g_str == &kEn
-        ? L"Ctrl+click in point mode starts a new group with the current colour."
-        : L"Ctrl+клик в режиме точек начинает новую группу с текущим цветом.";
 }
 
 const wchar_t* side_panel_button_text() {
@@ -1352,24 +1377,36 @@ double eval_formula_rpn(const std::vector<FormulaToken>& rpn, double x) {
             case FormulaOp::Number: if (!push(token.value)) return std::numeric_limits<double>::quiet_NaN(); break;
             case FormulaOp::Variable: if (!push(x)) return std::numeric_limits<double>::quiet_NaN(); break;
             case FormulaOp::Add: {
-                double a, b; if (!pop2(a, b)) return std::numeric_limits<double>::quiet_NaN();
-                if (!push(a + b)) return std::numeric_limits<double>::quiet_NaN(); break;
+                double a, b;
+                if (!pop2(a, b)) return std::numeric_limits<double>::quiet_NaN();
+                if (!push(a + b)) return std::numeric_limits<double>::quiet_NaN();
+                break;
             }
             case FormulaOp::Sub: {
-                double a, b; if (!pop2(a, b)) return std::numeric_limits<double>::quiet_NaN();
-                if (!push(a - b)) return std::numeric_limits<double>::quiet_NaN(); break;
+                double a, b;
+                if (!pop2(a, b)) return std::numeric_limits<double>::quiet_NaN();
+                if (!push(a - b)) return std::numeric_limits<double>::quiet_NaN();
+                break;
             }
             case FormulaOp::Mul: {
-                double a, b; if (!pop2(a, b)) return std::numeric_limits<double>::quiet_NaN();
-                if (!push(a * b)) return std::numeric_limits<double>::quiet_NaN(); break;
+                double a, b;
+                if (!pop2(a, b)) return std::numeric_limits<double>::quiet_NaN();
+                if (!push(a * b)) return std::numeric_limits<double>::quiet_NaN();
+                break;
             }
             case FormulaOp::Div: {
-                double a, b; if (!pop2(a, b)) return std::numeric_limits<double>::quiet_NaN();
-                if (!push(b == 0.0 ? std::numeric_limits<double>::quiet_NaN() : (a / b))) return std::numeric_limits<double>::quiet_NaN(); break;
+                double a, b;
+                if (!pop2(a, b)) return std::numeric_limits<double>::quiet_NaN();
+                if (!push(b == 0.0 ? std::numeric_limits<double>::quiet_NaN() : (a / b))) {
+                    return std::numeric_limits<double>::quiet_NaN();
+                }
+                break;
             }
             case FormulaOp::Neg: {
-                double v = pop1(); if (!std::isfinite(v) && !std::isnan(v)) return std::numeric_limits<double>::quiet_NaN();
-                if (!push(-v)) return std::numeric_limits<double>::quiet_NaN(); break;
+                double v = pop1();
+                if (!std::isfinite(v) && !std::isnan(v)) return std::numeric_limits<double>::quiet_NaN();
+                if (!push(-v)) return std::numeric_limits<double>::quiet_NaN();
+                break;
             }
             case FormulaOp::FuncAbs: {
                 double v = pop1(); if (!push(std::fabs(v))) return std::numeric_limits<double>::quiet_NaN(); break;
@@ -1613,14 +1650,10 @@ bool settings_snapshot_differs(const SettingsSnapshot& a, const SettingsSnapshot
            a.y_amp_max != b.y_amp_max;
 }
 
-bool settings_snapshot_formulas_differ(const SettingsSnapshot& a, const SettingsSnapshot& b) {
-    return a.global_formula != b.global_formula || a.channel_formulas != b.channel_formulas;
-}
-
 void sync_channel_controls_from_state() {
     for (std::size_t i = 0; i < g.checks.size() && i < g.visible.size(); ++i) {
         if (g.checks[i]) {
-            SendMessageW(g.checks[i], BM_SETCHECK, g.visible[i] ? BST_CHECKED : BST_UNCHECKED, 0);
+            set_toggle_checked(g.checks[i], g.visible[i] != 0);
         }
     }
     for (std::size_t i = 0; i < g.check_labels.size() && i < g.channel_labels.size(); ++i) {
@@ -2195,7 +2228,7 @@ void rebuild_checks() {
             WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | BS_OWNERDRAW, 0, 0, 10, 10, g.main,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_CHAN_BASE + i)), inst, nullptr);
         SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-        SendMessageW(c, BM_SETCHECK, g.visible[i] ? BST_CHECKED : BST_UNCHECKED, 0);
+        set_toggle_checked(c, g.visible[i] != 0);
         g.checks.push_back(c);
 
         HWND lbl = CreateWindowExW(
@@ -2272,8 +2305,9 @@ void load_side_point_group_controls() {
     const int index = side_selected_point_group();
     const bool valid = index >= 0 && index < static_cast<int>(g.point_groups.size());
     if (g.side_point_group_visible) {
-        SendMessageW(g.side_point_group_visible, BM_SETCHECK,
-            (valid && g.point_groups[static_cast<std::size_t>(index)].visible) ? BST_CHECKED : BST_UNCHECKED, 0);
+        set_toggle_checked(
+            g.side_point_group_visible,
+            valid && g.point_groups[static_cast<std::size_t>(index)].visible);
         EnableWindow(g.side_point_group_visible, valid);
     }
     if (g.side_point_group_color) EnableWindow(g.side_point_group_color, valid);
@@ -2406,7 +2440,7 @@ void refresh_side_panel_controls() {
         HWND ctl = GetDlgItem(g.main, item.id);
         if (!ctl) continue;
         SetWindowTextW(ctl, item.text);
-        SendMessageW(ctl, BM_SETCHECK, item.value ? BST_CHECKED : BST_UNCHECKED, 0);
+        set_toggle_checked(ctl, item.value);
     }
     load_side_transform_controls();
     populate_side_point_group_list();
@@ -2426,6 +2460,19 @@ void layout() {
     int x = 8;
     auto place = [&](HWND h, int w, int row_y) { MoveWindow(h, x, row_y, w, 28, TRUE); x += w + 4; };
     auto sep = [&]() { g.toolbar_seps.push_back(x + 2); x += 8; };
+    auto text_button_width = [&](HWND h, int min_w, int pad) {
+        if (!h) return min_w;
+        wchar_t text[128]{};
+        GetWindowTextW(h, text, 128);
+        HDC dc = GetDC(h);
+        HFONT font = g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+        HGDIOBJ old_font = SelectObject(dc, font);
+        SIZE sz{};
+        GetTextExtentPoint32W(dc, text, lstrlenW(text), &sz);
+        SelectObject(dc, old_font);
+        ReleaseDC(h, dc);
+        return max(min_w, static_cast<int>(sz.cx) + pad);
+    };
 
     // Row 1: frequent global actions
     x = 8;
@@ -2436,7 +2483,7 @@ void layout() {
     place(g.play, 92, 8);
     sep();
     place(g.reset, 80, 8);
-    place(g.autoy, 156, 8);
+    place(g.autoy, text_button_width(g.autoy, 104, 28), 8);
 
     // Row 2: graph tools and settings
     x = 8;
@@ -2619,34 +2666,18 @@ bool active_axis(double*& lo, double*& hi, double& minb, double& maxb, double& m
 
 bool current_time_yrange(double& ymin, double& ymax);
 bool current_freq_yrange(double& ymin, double& ymax);
-void sync_menu();
 void set_mode(bool freq_mode);
 void invalidate_plot();
 void rebuild_ui();
 void rebuild_accelerators();
-void refresh_settings_controls();
-void compute_spectrum_from_current_source();
-void ensure_channel_formula_vectors();
-double transform_channel_value(std::size_t ci, double raw);
-void refresh_side_panel_controls();
-void apply_side_panel_visibility();
-void set_side_panel_tab(int tab);
-int side_panel_width();
-void layout();
-void update_side_panel_scrollbar(int viewport_top, int content_height);
-bool side_panel_hit_test(const POINT& pt);
-void scroll_side_panel(int delta);
 HMENU make_menu();
 std::wstring hotkey_text_for_command(int command);
-std::wstring format_edit_number(double value);
 bool parse_wide_double_text(const wchar_t* text, double& out);
 bool prompt_numeric_value(const wchar_t* title, const wchar_t* label,
                           const wchar_t* apply_text, const wchar_t* cancel_text,
                           const wchar_t* invalid_text, double initial_value,
                           bool positive_only, double& out_value);
 void fill_rounded_rect(HDC dc, const RECT& r, COLORREF fill, COLORREF border, int radius);
-void load_runtime_settings();
-void save_runtime_settings();
 void draw_welcome_action_button(HDC dc, const RECT& r, const wchar_t* txt, bool pressed, bool primary, bool outlined);
 
 const wchar_t* speed_menu_text() {
@@ -2971,7 +3002,8 @@ bool prompt_numeric_value(const wchar_t* title, const wchar_t* label,
                           bool positive_only, double& out_value) {
     static ATOM atom = 0;
     if (!atom) {
-        WNDCLASSEXW wc = { sizeof(wc) };
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
         wc.lpfnWndProc = NumericPromptProc;
         wc.hInstance = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(g.main, GWLP_HINSTANCE));
         wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
@@ -3032,7 +3064,8 @@ bool prompt_numeric_value(const wchar_t* title, const wchar_t* label,
 bool prompt_light_mode_window(double range_start, double range_end, double& out_start, double& out_end) {
     static ATOM atom = 0;
     if (!atom) {
-        WNDCLASSEXW wc = { sizeof(wc) };
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
         wc.lpfnWndProc = RangePromptProc;
         wc.hInstance = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(g.main, GWLP_HINSTANCE));
         wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
@@ -3216,6 +3249,7 @@ void zoom_y_at(double center_frac, double factor) {
 }
 
 void zoom_y_amp_at(double center_frac, double factor) {
+    (void)center_frac;
     if (!g.spec_valid || g.spec.amp.empty()) return;
     double ymax = 0.0;
     for (std::size_t j = 0; j < g.spec.amp.size(); ++j) {
@@ -3228,7 +3262,6 @@ void zoom_y_amp_at(double center_frac, double factor) {
     if (!g.auto_y_amp) ytop = g.y_amp_max;
     const double w = ytop;
     if (w <= 0) return;
-    const double c = w * center_frac;
     double nw = w * factor;
     const double minw = std::max(1e-12, w * 1e-6);
     if (nw < minw) nw = minw;
@@ -3350,6 +3383,42 @@ void toggle_play() {
 // ---- loading -------------------------------------------------------------
 
 static HWND g_loading_wnd = nullptr;
+static std::wstring g_loading_text;
+
+LRESULT CALLBACK LoadingProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+        case WM_ERASEBKGND:
+            return 1;
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            HDC dc = BeginPaint(hwnd, &ps);
+            RECT rc{};
+            GetClientRect(hwnd, &rc);
+
+            HBRUSH outer = CreateSolidBrush(g_theme->bg_main);
+            FillRect(dc, &rc, outer);
+            DeleteObject(outer);
+
+            RECT card = rc;
+            InflateRect(&card, -2, -2);
+            fill_rounded_rect(dc, card, g_theme->bg_panel, g_theme->separator, 12);
+
+            HFONT font = g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+            HGDIOBJ old_font = SelectObject(dc, font);
+            SetBkMode(dc, TRANSPARENT);
+            SetTextColor(dc, g_theme->text_primary);
+
+            RECT text_rect = { card.left + 18, card.top + 18, card.right - 18, card.bottom - 18 };
+            DrawTextW(dc, g_loading_text.c_str(), -1, &text_rect,
+                      DT_CENTER | DT_VCENTER | DT_WORDBREAK | DT_NOPREFIX);
+
+            SelectObject(dc, old_font);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
 
 void show_loading(const std::wstring& msg) {
     if (g_loading_wnd) { DestroyWindow(g_loading_wnd); g_loading_wnd = nullptr; }
@@ -3361,16 +3430,39 @@ void show_loading(const std::wstring& msg) {
             ++i;
         }
     }
+    g_loading_text = display;
+
+    static ATOM atom = 0;
+    if (!atom) {
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = LoadingProc;
+        wc.hInstance = inst;
+        wc.hCursor = LoadCursor(nullptr, IDC_WAIT);
+        wc.hbrBackground = nullptr;
+        wc.lpszClassName = L"LvmLoadingOverlay";
+        atom = RegisterClassExW(&wc);
+    }
+
+    HFONT font = g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+    HDC screen = GetDC(nullptr);
+    HGDIOBJ old_font = SelectObject(screen, font);
+    RECT text_rect = { 0, 0, 280, 0 };
+    DrawTextW(screen, g_loading_text.c_str(), -1, &text_rect,
+              DT_CALCRECT | DT_CENTER | DT_WORDBREAK | DT_NOPREFIX);
+    SelectObject(screen, old_font);
+    ReleaseDC(nullptr, screen);
+
+    const int text_width = static_cast<int>(text_rect.right - text_rect.left);
+    const int text_height = static_cast<int>(text_rect.bottom - text_rect.top);
+    const int width = std::clamp(text_width + 52, 236, 340);
+    const int height = std::clamp(text_height + 42, 76, 120);
     g_loading_wnd = CreateWindowExW(
         WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-        L"Static", display.c_str(),
-        WS_POPUP | WS_VISIBLE | SS_CENTER | WS_BORDER,
-        0, 0, 420, 96, g.main, nullptr, inst, nullptr);
+        L"LvmLoadingOverlay", L"",
+        WS_POPUP | WS_VISIBLE,
+        0, 0, width, height, g.main, nullptr, inst, nullptr);
     if (!g_loading_wnd) return;
-    HFONT font = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    if (font) SendMessageW(g_loading_wnd, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
     RECT mr, wr;
     GetWindowRect(g.main, &mr);
     GetWindowRect(g_loading_wnd, &wr);
@@ -4021,27 +4113,48 @@ void draw_catmull_rom(HDC dc, const std::vector<POINT>& pts) {
     }
 }
 
-double visible_time_gap_threshold(const std::vector<double>& time, std::size_t lo, std::size_t hi) {
-    if (hi <= lo + 1) return std::numeric_limits<double>::infinity();
+struct TimeStepEstimate {
+    double step = 0.0;
+    std::size_t count = 0;
+};
 
+TimeStepEstimate estimate_time_step(const std::vector<double>& time, std::size_t lo, std::size_t hi, std::size_t max_diffs) {
+    if (hi <= lo + 1 || max_diffs == 0) return {};
     std::vector<double> diffs;
-    diffs.reserve(512);
-    for (std::size_t i = lo + 1; i < hi && diffs.size() < 512; ++i) {
+    diffs.reserve(max_diffs);
+    const std::size_t span = hi - lo;
+    const std::size_t stride = std::max<std::size_t>(1, span / std::max<std::size_t>(max_diffs, 1));
+    for (std::size_t i = lo + 1; i < hi && diffs.size() < max_diffs; i += stride) {
         const double d = time[i] - time[i - 1];
         if (std::isfinite(d) && d > 0.0) diffs.push_back(d);
     }
-    if (diffs.empty()) return std::numeric_limits<double>::infinity();
+    if (diffs.empty()) return {};
 
     std::sort(diffs.begin(), diffs.end());
     const std::size_t mid = diffs.size() / 2;
     double median = (diffs.size() % 2 == 0)
         ? 0.5 * (diffs[mid - 1] + diffs[mid])
         : diffs[mid];
-    if (!(median > 0.0) || !std::isfinite(median)) return std::numeric_limits<double>::infinity();
-    return median * 64.0;
+    if (!(median > 0.0) || !std::isfinite(median)) return {};
+    return { median, diffs.size() };
+}
+
+double effective_time_gap_step(const std::vector<double>& time, std::size_t lo, std::size_t hi) {
+    const TimeStepEstimate local = estimate_time_step(time, lo, hi, 512);
+    const TimeStepEstimate global = estimate_time_step(time, 0, time.size(), 4096);
+
+    if (local.step > 0.0 && global.step > 0.0) {
+        if (local.count < 8) return global.step;
+        if (local.step > global.step * 8.0) return global.step;
+        return std::min(local.step, global.step * 4.0);
+    }
+    if (local.step > 0.0) return local.step;
+    if (global.step > 0.0) return global.step;
+    return 0.0;
 }
 
 void draw_time(HDC dc, const RECT& p) {
+    g.visible_gap_markers.clear();
     const std::vector<double>& t = g.ds.time;
     const std::size_t n = t.size();
     std::size_t lo = static_cast<std::size_t>(
@@ -4099,7 +4212,71 @@ void draw_time(HDC dc, const RECT& p) {
     static std::vector<float> series;
     static std::vector<float> cmin, cmax;
     const bool sparse = (hi - lo) <= static_cast<std::size_t>(pw) * 2;
-    const double gap_threshold = visible_time_gap_threshold(t, lo, hi);
+    const double gap_step = effective_time_gap_step(t, lo, hi);
+    const double gap_threshold = (gap_step > 0.0)
+        ? (gap_step * 64.0)
+        : std::numeric_limits<double>::infinity();
+
+    struct TimeGapAnnotation {
+        int left_px = 0;
+        int right_px = 0;
+        double duration = 0.0;
+        long long estimated_missing_samples = 0;
+    };
+    std::vector<TimeGapAnnotation> gap_annotations;
+    if (std::isfinite(gap_threshold)) {
+        for (std::size_t i = std::max<std::size_t>(lo + 1, 1); i < hi; ++i) {
+            const double dt = t[i] - t[i - 1];
+            if (!std::isfinite(dt) || dt <= gap_threshold) continue;
+
+            int left_px = mapx(t[i - 1]);
+            int right_px = mapx(t[i]);
+            if (right_px < left_px) std::swap(left_px, right_px);
+            left_px = std::clamp(left_px, static_cast<int>(p.left) + 1, static_cast<int>(p.right) - 1);
+            right_px = std::clamp(right_px, static_cast<int>(p.left) + 1, static_cast<int>(p.right) - 1);
+            if (right_px <= left_px) right_px = std::min(static_cast<int>(p.right) - 1, left_px + 1);
+
+            long long estimated_missing_samples = 0;
+            if (gap_step > 0.0) {
+                estimated_missing_samples = static_cast<long long>(std::llround(dt / gap_step)) - 1;
+                if (estimated_missing_samples < 0) estimated_missing_samples = 0;
+            }
+
+            gap_annotations.push_back(TimeGapAnnotation{
+                left_px,
+                right_px,
+                dt,
+                estimated_missing_samples
+            });
+        }
+    }
+
+    if (g.show_gap_markers && !gap_annotations.empty()) {
+        const COLORREF gap_orange = RGB(245, 140, 32);
+        const COLORREF gap_fill = (g_theme == &kDarkTheme)
+            ? mix_color(g_theme->bg_plot, gap_orange, 44)
+            : mix_color(g_theme->bg_plot, gap_orange, 32);
+        HBRUSH gap_brush = CreateSolidBrush(gap_fill);
+        HPEN gap_pen = CreatePen(PS_DOT, 1, gap_orange);
+        HGDIOBJ old_gap_brush = SelectObject(dc, gap_brush);
+        HGDIOBJ old_gap_pen = SelectObject(dc, gap_pen);
+
+        for (const auto& gap : gap_annotations) {
+            RECT gap_rect = { gap.left_px, p.top + 1, gap.right_px, p.bottom - 1 };
+            if (gap_rect.right <= gap_rect.left) continue;
+            Rectangle(dc, gap_rect.left, gap_rect.top, gap_rect.right, gap_rect.bottom);
+            App::GapMarkerVisual visual;
+            visual.rect = gap_rect;
+            visual.duration = gap.duration;
+            visual.estimated_missing_samples = gap.estimated_missing_samples;
+            g.visible_gap_markers.push_back(visual);
+        }
+
+        SelectObject(dc, old_gap_pen);
+        SelectObject(dc, old_gap_brush);
+        DeleteObject(gap_pen);
+        DeleteObject(gap_brush);
+    }
 
     for (std::size_t c = 0; c < g.ds.channel_count(); ++c) {
         if (!g.visible[c]) continue;
@@ -4474,6 +4651,7 @@ void draw_freq(HDC dc, const RECT& p) {
 
 void draw_chart(HDC dc, const RECT& p) {
     if (!has_data()) {
+        g.visible_gap_markers.clear();
         SetTextAlign(dc, TA_CENTER | TA_BASELINE);
         SetTextColor(dc, g_theme->text_secondary);
         std::wstring msg = (g_str == &kEn)
@@ -4483,8 +4661,12 @@ void draw_chart(HDC dc, const RECT& p) {
         g.vvalid = false;
         return;
     }
-    if (g.freq_mode) draw_freq(dc, p);
-    else draw_time(dc, p);
+    if (g.freq_mode) {
+        g.visible_gap_markers.clear();
+        draw_freq(dc, p);
+    } else {
+        draw_time(dc, p);
+    }
     draw_guides(dc);
     draw_markers(dc);
     draw_measure(dc);
@@ -4801,14 +4983,6 @@ bool parse_wide_double_text(const wchar_t* text, double& out) {
     if (*end != 0) return false;
     out = value;
     return true;
-}
-
-bool read_edit_double(HWND parent, int id, double& out) {
-    wchar_t buf[128];
-    HWND edit = GetDlgItem(parent, id);
-    if (!edit) return false;
-    GetWindowTextW(edit, buf, 128);
-    return parse_wide_double_text(buf, out);
 }
 
 void reset_channel_transform(std::size_t ci) {
@@ -5276,6 +5450,7 @@ void load_runtime_settings() {
     g.vertical_pan = read_ini_int(L"ui", L"vertical_pan", g.vertical_pan ? 1 : 0) != 0;
     g.snap_to_data = read_ini_int(L"ui", L"snap_to_data", g.snap_to_data ? 1 : 0) != 0;
     g.light_mode = read_ini_int(L"ui", L"light_mode", g.light_mode ? 1 : 0) != 0;
+    g.show_gap_markers = read_ini_int(L"ui", L"show_gap_markers", g.show_gap_markers ? 1 : 0) != 0;
     g.side_panel_visible = read_ini_int(L"ui", L"side_panel_visible", g.side_panel_visible ? 1 : 0) != 0;
     g.side_panel_tab = read_ini_int(L"ui", L"side_panel_tab", g.side_panel_tab);
     if (g.side_panel_tab != 1) g.side_panel_tab = 0;
@@ -5323,6 +5498,7 @@ void save_runtime_settings() {
     WritePrivateProfileStringW(L"ui", L"vertical_pan", g.vertical_pan ? L"1" : L"0", g_config_path.c_str());
     WritePrivateProfileStringW(L"ui", L"snap_to_data", g.snap_to_data ? L"1" : L"0", g_config_path.c_str());
     WritePrivateProfileStringW(L"ui", L"light_mode", g.light_mode ? L"1" : L"0", g_config_path.c_str());
+    WritePrivateProfileStringW(L"ui", L"show_gap_markers", g.show_gap_markers ? L"1" : L"0", g_config_path.c_str());
     WritePrivateProfileStringW(L"ui", L"side_panel_visible", g.side_panel_visible ? L"1" : L"0", g_config_path.c_str());
     WritePrivateProfileStringW(L"ui", L"side_panel_tab", g.side_panel_tab == 1 ? L"1" : L"0", g_config_path.c_str());
     write_ini_double(L"ui", L"play_speed", g.play_speed);
@@ -5485,8 +5661,14 @@ std::wstring welcome_features_text() {
     return out;
 }
 
+const wchar_t* welcome_author_credit_text() {
+    return (g_str == &kEn)
+        ? L"Application developed by Alexander Muleev  |  al.muleev@gmail.com"
+        : L"Приложение разработал Мулеев Александр  |  al.muleev@gmail.com";
+}
+
 const wchar_t* welcome_actions_title_text() {
-    return (g_str == &kEn) ? L"Start Here" : L"Быстрый старт";
+    return L"";
 }
 
 struct WelcomeLayout {
@@ -5587,8 +5769,8 @@ void layout_welcome_controls(HWND hwnd) {
     place(IDW_THEME_LIGHT, ax, ay, theme_w, segment_button_h);
     place(IDW_THEME_DARK, ax + aw - theme_w, ay, theme_w, segment_button_h);
     ay += segment_button_h + (layout.compact ? 12 : 16);
-    place(IDW_LIGHT_MODE, ax, ay, aw, 22);
-    ay += layout.compact ? 24 : 28;
+    place(IDW_LIGHT_MODE, ax, ay, aw, 28);
+    ay += layout.compact ? 30 : 34;
     place(IDW_LIGHT_HINT, ax, ay, aw, layout.compact ? 42 : (layout.stacked ? 64 : 60));
     ay += layout.compact ? 50 : (layout.stacked ? 74 : 70);
     place(IDW_ACTIONS_TITLE, ax, ay, aw, layout.compact ? 20 : 24);
@@ -5652,6 +5834,158 @@ std::wstring hotkeys_body_text() {
     return out;
 }
 
+const wchar_t* hotkeys_dialog_close_text() {
+    return (g_str == &kEn) ? L"Close" : L"Закрыть";
+}
+
+std::vector<std::wstring> hotkeys_dialog_lines() {
+    std::vector<std::wstring> lines;
+    std::wstring body = hotkeys_body_text();
+    std::size_t start = 0;
+    while (start <= body.size()) {
+        std::size_t end = body.find(L'\n', start);
+        std::wstring line = body.substr(start, end == std::wstring::npos ? std::wstring::npos : end - start);
+        if (!line.empty() && line.back() == L'\r') line.pop_back();
+        lines.push_back(std::move(line));
+        if (end == std::wstring::npos) break;
+        start = end + 1;
+    }
+    return lines;
+}
+
+SIZE hotkeys_dialog_client_size() {
+    const auto lines = hotkeys_dialog_lines();
+    HFONT font = g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+    HWND measure_wnd = g.main ? g.main : GetDesktopWindow();
+    HDC dc = GetDC(measure_wnd);
+    HFONT old_font = dc ? reinterpret_cast<HFONT>(SelectObject(dc, font)) : nullptr;
+    TEXTMETRICW tm{};
+    if (dc) GetTextMetricsW(dc, &tm);
+
+    int max_line_width = 0;
+    for (const std::wstring& line : lines) {
+        SIZE text_size{};
+        const wchar_t* text = line.empty() ? L" " : line.c_str();
+        int length = line.empty() ? 1 : static_cast<int>(line.size());
+        if (dc && GetTextExtentPoint32W(dc, text, length, &text_size)) {
+            max_line_width = max(max_line_width, static_cast<int>(text_size.cx));
+        }
+    }
+
+    if (dc) {
+        if (old_font) SelectObject(dc, old_font);
+        ReleaseDC(measure_wnd, dc);
+    }
+
+    const int title_h = max(20, static_cast<int>(tm.tmHeight + tm.tmExternalLeading));
+    const int line_h = max(18, static_cast<int>(tm.tmHeight + tm.tmExternalLeading + 2));
+    const int button_h = 30;
+    const int client_w = max(620, max_line_width + 56);
+    const int client_h = 16 + title_h + 8 + static_cast<int>(lines.size()) * line_h + 8 + 12 + button_h + 18;
+    return { client_w, max(client_h, 300) };
+}
+
+void populate_hotkeys_dialog_list(HWND list) {
+    if (!list) return;
+    SendMessageW(list, LB_RESETCONTENT, 0, 0);
+    const auto lines = hotkeys_dialog_lines();
+    for (const std::wstring& line : lines) {
+        SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(line.c_str()));
+    }
+    SendMessageW(list, LB_SETCURSEL, static_cast<WPARAM>(-1), 0);
+}
+
+LRESULT CALLBACK HotkeysDialogProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+        case WM_CREATE: {
+            HFONT font = g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+            RECT rc{};
+            GetClientRect(hwnd, &rc);
+            const int pad = 18;
+            const int title_y = 16;
+            const int title_h = 20;
+            const int list_y = 44;
+            const int button_h = 30;
+            const int button_w = 122;
+            const int button_y = rc.bottom - pad - button_h;
+            const int list_w = max(200, static_cast<int>(rc.right - pad * 2));
+            const int list_h = max(120, button_y - 12 - list_y);
+            HWND label = CreateWindowExW(
+                0, L"STATIC",
+                (g_str == &kEn) ? L"Configured keyboard shortcuts" : L"Настроенные горячие клавиши",
+                WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX,
+                pad, title_y, list_w, title_h, hwnd, nullptr,
+                reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
+            g_hotkeys_dialog.list = CreateWindowExW(
+                0, L"LISTBOX", L"",
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER | LBS_NOINTEGRALHEIGHT,
+                pad, list_y, list_w, list_h, hwnd,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_HOTKEYS_DIALOG_LIST)),
+                reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
+            HWND close = CreateWindowExW(
+                0, L"BUTTON", hotkeys_dialog_close_text(),
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+                rc.right - pad - button_w, button_y, button_w, button_h, hwnd,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_HOTKEYS_DIALOG_CLOSE)),
+                reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
+            if (label) SendMessageW(label, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            if (g_hotkeys_dialog.list) SendMessageW(g_hotkeys_dialog.list, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            if (close) SendMessageW(close, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            populate_hotkeys_dialog_list(g_hotkeys_dialog.list);
+            return 0;
+        }
+        case WM_COMMAND:
+            if (LOWORD(wp) == IDC_HOTKEYS_DIALOG_CLOSE) {
+                DestroyWindow(hwnd);
+                return 0;
+            }
+            break;
+        case WM_CLOSE:
+            DestroyWindow(hwnd);
+            return 0;
+        case WM_ERASEBKGND: {
+            HDC dc = reinterpret_cast<HDC>(wp);
+            RECT rc{};
+            GetClientRect(hwnd, &rc);
+            HBRUSH b = CreateSolidBrush(g_theme->bg_panel);
+            FillRect(dc, &rc, b);
+            DeleteObject(b);
+            return 1;
+        }
+        case WM_CTLCOLORSTATIC:
+        case WM_CTLCOLORBTN: {
+            HDC dc = reinterpret_cast<HDC>(wp);
+            SetBkMode(dc, TRANSPARENT);
+            SetTextColor(dc, g_theme->text_primary);
+            return reinterpret_cast<LRESULT>(g_panel_brush);
+        }
+        case WM_CTLCOLORLISTBOX: {
+            HDC dc = reinterpret_cast<HDC>(wp);
+            SetBkColor(dc, g_theme->bg_plot);
+            SetTextColor(dc, g_theme->text_primary);
+            return reinterpret_cast<LRESULT>(g_input_brush ? g_input_brush : g_panel_brush);
+        }
+        case WM_DRAWITEM: {
+            DRAWITEMSTRUCT* dis = reinterpret_cast<DRAWITEMSTRUCT*>(lp);
+            if (!dis || !dis->hwndItem) break;
+            if (GetDlgCtrlID(dis->hwndItem) == IDC_HOTKEYS_DIALOG_CLOSE) {
+                wchar_t txt[64]{};
+                GetWindowTextW(dis->hwndItem, txt, 64);
+                const bool pressed = (dis->itemState & ODS_SELECTED) != 0;
+                draw_welcome_action_button(dis->hDC, dis->rcItem, txt, pressed, false, false);
+                return TRUE;
+            }
+            break;
+        }
+        case WM_DESTROY:
+            g_hotkeys_dialog.done = true;
+            g_hotkeys_dialog.wnd = nullptr;
+            g_hotkeys_dialog.list = nullptr;
+            return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
 std::wstring toolbar_hover_text(HWND btn) {
     const bool en = (g_str == &kEn);
     if (btn == g.open) return g_str->hover_open;
@@ -5673,20 +6007,43 @@ std::wstring toolbar_hover_text(HWND btn) {
     return L"";
 }
 
+std::wstring time_gap_details_text(double duration, long long estimated_missing_samples) {
+    wchar_t buf[192]{};
+    if (estimated_missing_samples <= 0) {
+        if (g_str == &kEn) swprintf(buf, 192, L"Gap duration: %.6g s", duration);
+        else swprintf(buf, 192, L"Длительность разрыва: %.6g c", duration);
+    } else {
+        if (g_str == &kEn) swprintf(buf, 192, L"Gap duration: %.6g s\nApprox. missing samples: ~%lld", duration, estimated_missing_samples);
+        else swprintf(buf, 192, L"Длительность разрыва: %.6g c\nПропущено примерно: ~%lld отсч.", duration, estimated_missing_samples);
+    }
+    return buf;
+}
+
+const wchar_t* time_gap_details_title() {
+    return (g_str == &kEn) ? L"Gap details" : L"Информация о разрыве";
+}
+
+int hit_test_gap_marker(int x, int y) {
+    POINT pt{ x, y };
+    for (int i = static_cast<int>(g.visible_gap_markers.size()) - 1; i >= 0; --i) {
+        if (PtInRect(&g.visible_gap_markers[static_cast<std::size_t>(i)].rect, pt)) return i;
+    }
+    return -1;
+}
+
+void show_gap_details_dialog(HWND owner, int gap_index) {
+    if (gap_index < 0 || gap_index >= static_cast<int>(g.visible_gap_markers.size())) return;
+    const auto& gap = g.visible_gap_markers[static_cast<std::size_t>(gap_index)];
+    const std::wstring text = time_gap_details_text(gap.duration, gap.estimated_missing_samples);
+    MessageBoxW(owner, text.c_str(), time_gap_details_title(), MB_OK | MB_ICONINFORMATION);
+}
+
 void append_menu_popup_owner_draw(HMENU bar, HMENU popup, const std::wstring& text) {
     AppendMenuW(
         bar,
         MF_OWNERDRAW | MF_POPUP,
         reinterpret_cast<UINT_PTR>(popup),
         reinterpret_cast<LPCWSTR>(stash_menu_entry(text, true, true)));
-}
-
-void append_submenu_popup_owner_draw(HMENU menu, HMENU popup, const std::wstring& text) {
-    AppendMenuW(
-        menu,
-        MF_OWNERDRAW | MF_POPUP,
-        reinterpret_cast<UINT_PTR>(popup),
-        reinterpret_cast<LPCWSTR>(stash_menu_entry(text, false, true)));
 }
 
 void append_menu_item_owner_draw(HMENU menu, UINT id, const std::wstring& text) {
@@ -5970,7 +6327,7 @@ void set_all_channels_visible(bool visible) {
     for (std::size_t i = 0; i < g.visible.size(); ++i) {
         g.visible[i] = visible ? 1 : 0;
         if (i < g.checks.size()) {
-            SendMessageW(g.checks[i], BM_SETCHECK, visible ? BST_CHECKED : BST_UNCHECKED, 0);
+            set_toggle_checked(g.checks[i], visible);
         }
     }
 }
@@ -6042,15 +6399,41 @@ bool is_settings_toggle_button_id(int id) {
 }
 
 bool is_settings_checkbox_id(int id) {
-    return id == IDC_SET_LIGHT_MODE;
+    return id == IDC_SET_LIGHT_MODE ||
+           id == IDC_SET_GAP_MARKERS;
+}
+
+bool is_welcome_checkbox_id(int id) {
+    return id == IDW_LIGHT_MODE;
+}
+
+bool uses_manual_toggle_state(HWND hwnd) {
+    if (!hwnd) return false;
+    const int id = GetDlgCtrlID(hwnd);
+    return is_channel_checkbox_id(id) ||
+           is_side_toggle_id(id) ||
+           id == IDC_SET_LIGHT_MODE ||
+           id == IDC_SET_GAP_MARKERS ||
+           is_welcome_checkbox_id(id) ||
+           id == IDC_SET_HOTKEY_CTRL ||
+           id == IDC_SET_HOTKEY_SHIFT ||
+           id == IDC_SET_HOTKEY_ALT;
 }
 
 bool is_toggle_checked(HWND hwnd) {
-    return hwnd && SendMessageW(hwnd, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    if (!hwnd) return false;
+    if (uses_manual_toggle_state(hwnd)) {
+        return GetPropW(hwnd, L"LvmToggleChecked") != nullptr;
+    }
+    return SendMessageW(hwnd, BM_GETCHECK, 0, 0) == BST_CHECKED;
 }
 
 void set_toggle_checked(HWND hwnd, bool checked) {
     if (!hwnd) return;
+    if (uses_manual_toggle_state(hwnd)) {
+        if (checked) SetPropW(hwnd, L"LvmToggleChecked", reinterpret_cast<HANDLE>(1));
+        else RemovePropW(hwnd, L"LvmToggleChecked");
+    }
     SendMessageW(hwnd, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
     InvalidateRect(hwnd, nullptr, FALSE);
 }
@@ -6061,13 +6444,15 @@ void toggle_checked_state(HWND hwnd) {
 
 void draw_themed_check_control(HDC dc, const RECT& r, const wchar_t* txt,
                                bool checked, bool pressed, bool enabled,
-                               bool radio, bool compact) {
-    HBRUSH bg = CreateSolidBrush(g_theme->bg_panel);
+                               bool radio, bool compact,
+                               COLORREF surface_bg = CLR_INVALID) {
+    const COLORREF base_bg = (surface_bg == CLR_INVALID) ? g_theme->bg_panel : surface_bg;
+    HBRUSH bg = CreateSolidBrush(base_bg);
     FillRect(dc, &r, bg);
     DeleteObject(bg);
 
     const int box_size = compact ? 14 : 16;
-    const int box_left = compact ? (r.left + ((r.right - r.left - box_size) / 2)) : (r.left + 2);
+    const int box_left = compact ? (r.left + ((r.right - r.left - box_size) / 2)) : (r.left + 4);
     const int box_top = r.top + ((r.bottom - r.top - box_size) / 2);
     RECT box = { box_left, box_top, box_left + box_size, box_top + box_size };
 
@@ -6076,8 +6461,8 @@ void draw_themed_check_control(HDC dc, const RECT& r, const wchar_t* txt,
     COLORREF border = checked ? g_theme->accent : g_theme->btn_border;
     COLORREF text = enabled ? g_theme->text_primary : g_theme->text_secondary;
     if (!enabled) {
-        fill = mix_color(fill, g_theme->bg_panel, 96);
-        border = mix_color(border, g_theme->bg_panel, 96);
+        fill = mix_color(fill, base_bg, 96);
+        border = mix_color(border, base_bg, 96);
     }
 
     if (radio) {
@@ -6120,7 +6505,7 @@ void draw_themed_check_control(HDC dc, const RECT& r, const wchar_t* txt,
         SetTextColor(dc, text);
         HFONT font = g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
         HGDIOBJ old_font = SelectObject(dc, font);
-        RECT text_rect = { box.right + 8, r.top, r.right - 2, r.bottom };
+        RECT text_rect = { box.right + 10, r.top, r.right - 4, r.bottom };
         if (pressed) OffsetRect(&text_rect, 0, 1);
         DrawTextW(dc, txt, -1, &text_rect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
         SelectObject(dc, old_font);
@@ -6219,7 +6604,8 @@ void apply_theme_choice(const Theme* theme) {
     save_app_settings();
     update_theme_brushes();
     if (g.menu) {
-        MENUINFO mi = { sizeof(mi) };
+        MENUINFO mi{};
+        mi.cbSize = sizeof(mi);
         mi.fMask = MIM_BACKGROUND | MIM_APPLYTOSUBMENUS;
         mi.hbrBack = CreateSolidBrush(g_theme->bg_toolbar);
         SetMenuInfo(g.menu, &mi);
@@ -6234,11 +6620,11 @@ void draw_themed_button(HDC dc, const RECT& r, const wchar_t* txt, bool pressed,
     if (active && pressed) {
         bg_col = g_theme->accent_hover;
         border_col = g_theme->accent_hover;
-        text_col = RGB(255, 255, 255);
+        text_col = (g_theme == &kDarkTheme) ? RGB(255, 255, 255) : RGB(12, 42, 78);
     } else if (active) {
         bg_col = mix_color(g_theme->btn_bg, g_theme->accent, hover ? 64 : 42);
         border_col = g_theme->accent;
-        text_col = g_theme->accent;
+        text_col = (g_theme == &kDarkTheme) ? RGB(255, 255, 255) : RGB(12, 42, 78);
     } else if (pressed) {
         bg_col = mix_color(g_theme->btn_hover, g_theme->separator, 68);
         border_col = g_theme->separator;
@@ -6257,8 +6643,55 @@ void draw_themed_button(HDC dc, const RECT& r, const wchar_t* txt, bool pressed,
 }
 
 void show_hotkeys() {
-    std::wstring text = hotkeys_body_text();
-    MessageBoxW(g.main, text.c_str(), g_str->dlg_hotkeys_title, MB_OK | MB_ICONINFORMATION);
+    static ATOM atom = 0;
+    if (!atom) {
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = HotkeysDialogProc;
+        wc.hInstance = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(g.main, GWLP_HINSTANCE));
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.hbrBackground = nullptr;
+        wc.lpszClassName = L"LvmHotkeysDialog";
+        atom = RegisterClassExW(&wc);
+    }
+
+    const SIZE client_size = hotkeys_dialog_client_size();
+    RECT dlg_rc{ 0, 0, client_size.cx, client_size.cy };
+    AdjustWindowRectEx(&dlg_rc, WS_CAPTION | WS_SYSMENU | WS_POPUP, FALSE, WS_EX_DLGMODALFRAME | WS_EX_TOOLWINDOW);
+
+    g_hotkeys_dialog.done = false;
+    g_hotkeys_dialog.wnd = CreateWindowExW(
+        WS_EX_DLGMODALFRAME | WS_EX_TOOLWINDOW,
+        L"LvmHotkeysDialog",
+        g_str->dlg_hotkeys_title,
+        WS_CAPTION | WS_SYSMENU | WS_POPUP | WS_VISIBLE,
+        CW_USEDEFAULT, CW_USEDEFAULT, dlg_rc.right - dlg_rc.left, dlg_rc.bottom - dlg_rc.top,
+        g.main, nullptr,
+        reinterpret_cast<HINSTANCE>(GetWindowLongPtr(g.main, GWLP_HINSTANCE)),
+        nullptr);
+    if (!g_hotkeys_dialog.wnd) return;
+
+    RECT mr{}, wr{};
+    GetWindowRect(g.main, &mr);
+    GetWindowRect(g_hotkeys_dialog.wnd, &wr);
+    SetWindowPos(
+        g_hotkeys_dialog.wnd, HWND_TOP,
+        mr.left + ((mr.right - mr.left) - (wr.right - wr.left)) / 2,
+        mr.top + ((mr.bottom - mr.top) - (wr.bottom - wr.top)) / 2,
+        0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+    EnableWindow(g.main, FALSE);
+    if (g_hotkeys_dialog.list) SetFocus(g_hotkeys_dialog.list);
+
+    MSG msg;
+    while (!g_hotkeys_dialog.done && GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        if (!IsDialogMessageW(g_hotkeys_dialog.wnd, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+
+    EnableWindow(g.main, TRUE);
+    SetForegroundWindow(g.main);
 }
 
 void show_about() {
@@ -6632,9 +7065,9 @@ void load_selected_hotkey_controls(HWND hwnd) {
     const HotkeyBinding* hk = find_hotkey_binding(command);
     BYTE fvirt = hk ? hk->fvirt : FVIRTKEY;
     WORD key = hk ? hk->key : 0;
-    SendMessageW(GetDlgItem(hwnd, IDC_SET_HOTKEY_CTRL), BM_SETCHECK, (fvirt & FCONTROL) ? BST_CHECKED : BST_UNCHECKED, 0);
-    SendMessageW(GetDlgItem(hwnd, IDC_SET_HOTKEY_SHIFT), BM_SETCHECK, (fvirt & FSHIFT) ? BST_CHECKED : BST_UNCHECKED, 0);
-    SendMessageW(GetDlgItem(hwnd, IDC_SET_HOTKEY_ALT), BM_SETCHECK, (fvirt & FALT) ? BST_CHECKED : BST_UNCHECKED, 0);
+    set_toggle_checked(GetDlgItem(hwnd, IDC_SET_HOTKEY_CTRL), (fvirt & FCONTROL) != 0);
+    set_toggle_checked(GetDlgItem(hwnd, IDC_SET_HOTKEY_SHIFT), (fvirt & FSHIFT) != 0);
+    set_toggle_checked(GetDlgItem(hwnd, IDC_SET_HOTKEY_ALT), (fvirt & FALT) != 0);
     HWND combo = GetDlgItem(hwnd, IDC_SET_HOTKEY_KEY);
     if (combo) SendMessageW(combo, CB_SETCURSEL, combo_index_by_key(combo, key), 0);
 }
@@ -6697,8 +7130,9 @@ void load_selected_point_group_controls(HWND hwnd) {
     HWND visible = GetDlgItem(hwnd, IDC_SET_POINT_GROUP_VISIBLE);
     HWND recolor = GetDlgItem(hwnd, IDC_SET_POINT_GROUP_COLOR);
     if (visible) {
-        SendMessageW(visible, BM_SETCHECK,
-            (valid && g.point_groups[static_cast<std::size_t>(index)].visible) ? BST_CHECKED : BST_UNCHECKED, 0);
+        set_toggle_checked(
+            visible,
+            valid && g.point_groups[static_cast<std::size_t>(index)].visible);
         EnableWindow(visible, valid);
     }
     if (recolor) EnableWindow(recolor, valid);
@@ -6730,7 +7164,10 @@ void populate_point_group_list(HWND hwnd) {
 void refresh_settings_controls() {
     if (!g.settings_wnd) return;
     CheckRadioButton(g.settings_wnd, IDC_SET_LANG_RU, IDC_SET_LANG_EN, g_str == &kEn ? IDC_SET_LANG_EN : IDC_SET_LANG_RU);
-    CheckDlgButton(g.settings_wnd, IDC_SET_LIGHT_MODE, g.light_mode ? BST_CHECKED : BST_UNCHECKED);
+    if (HWND light = GetDlgItem(g.settings_wnd, IDC_SET_LIGHT_MODE)) SetWindowTextW(light, g_str->light_mode);
+    set_toggle_checked(GetDlgItem(g.settings_wnd, IDC_SET_LIGHT_MODE), g.light_mode);
+    set_toggle_checked(GetDlgItem(g.settings_wnd, IDC_SET_GAP_MARKERS), g.show_gap_markers);
+    if (HWND gap = GetDlgItem(g.settings_wnd, IDC_SET_GAP_MARKERS)) SetWindowTextW(gap, gap_markers_toggle_text());
     if (HWND hint = GetDlgItem(g.settings_wnd, IDC_SET_LIGHT_HINT)) SetWindowTextW(hint, g_str->light_mode_hint);
     populate_hotkey_list(g.settings_wnd);
     load_selected_hotkey_controls(g.settings_wnd);
@@ -6744,7 +7181,8 @@ void rebuild_menu_bar() {
     g_menu_text_storage.clear();
     g.menu = make_menu();
     SetMenu(g.main, welcome_visible() ? nullptr : g.menu);
-    MENUINFO mi = { sizeof(mi) };
+    MENUINFO mi{};
+    mi.cbSize = sizeof(mi);
     mi.fMask = MIM_BACKGROUND | MIM_APPLYTOSUBMENUS;
     mi.hbrBack = CreateSolidBrush(g_theme->bg_toolbar);
     SetMenuInfo(g.menu, &mi);
@@ -6762,40 +7200,46 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                        id == IDC_SET_GROUP_HOTKEYS;
             };
             auto mk = [&](const wchar_t* cls, const wchar_t* text, DWORD style, int x, int y, int w, int h, int id) {
-                HWND c = CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | style, x, y, w, h, hwnd,
+                HWND c = CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | style, x, y, w, h, hwnd,
                     id ? reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)) : nullptr, inst, nullptr);
                 if (c) SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
                 if (c && is_settings_group(id)) EnableWindow(c, FALSE);
                 return c;
             };
+            auto mkcheck = [&](const wchar_t* text, int x, int y, int w, int h, int id) {
+                return mk(L"BUTTON", text, BS_OWNERDRAW | WS_TABSTOP, x, y, w, h, id);
+            };
             const bool en = (g_str == &kEn);
-            mk(L"BUTTON", en ? L"General" : L"Общие", BS_OWNERDRAW, 12, 10, 510, 136, IDC_SET_GROUP_GENERAL);
+            mk(L"BUTTON", en ? L"General" : L"Общие", BS_OWNERDRAW, 12, 10, 510, 166, IDC_SET_GROUP_GENERAL);
             mk(L"BUTTON", g_str->lang_ru, BS_OWNERDRAW, 28, 36, 110, 22, IDC_SET_LANG_RU);
             mk(L"BUTTON", g_str->lang_en, BS_OWNERDRAW, 144, 36, 110, 22, IDC_SET_LANG_EN);
-            mk(L"BUTTON", g_str->light_mode, BS_OWNERDRAW, 28, 71, 180, 26, IDC_SET_LIGHT_MODE);
-            mk(L"STATIC", g_str->light_mode_hint, SS_LEFT | SS_NOPREFIX, 28, 94, 468, 54, IDC_SET_LIGHT_HINT);
+            mkcheck(g_str->light_mode, 28, 70, 278, 28, IDC_SET_LIGHT_MODE);
+            mk(L"STATIC", g_str->light_mode_hint, SS_LEFT | SS_NOPREFIX, 28, 94, 468, 40, IDC_SET_LIGHT_HINT);
+            mkcheck(gap_markers_toggle_text(), 28, 136, 278, 28, IDC_SET_GAP_MARKERS);
 
-            mk(L"BUTTON", en ? L"Hotkeys" : L"Горячие клавиши", BS_OWNERDRAW, 12, 156, 510, 188, IDC_SET_GROUP_HOTKEYS);
-            mk(L"LISTBOX", L"", LBS_NOTIFY | WS_VSCROLL | WS_BORDER, 24, 180, 240, 150, IDC_SET_HOTKEY_LIST);
-            mk(L"BUTTON", L"Ctrl", BS_OWNERDRAW, 284, 188, 70, 22, IDC_SET_HOTKEY_CTRL);
-            mk(L"BUTTON", L"Shift", BS_OWNERDRAW, 356, 188, 70, 22, IDC_SET_HOTKEY_SHIFT);
-            mk(L"BUTTON", L"Alt", BS_OWNERDRAW, 428, 188, 70, 22, IDC_SET_HOTKEY_ALT);
-            mk(L"STATIC", en ? L"Key:" : L"Клавиша:", SS_LEFT, 284, 220, 80, 20, 0);
-            HWND combo = mk(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_BORDER, 284, 240, 214, 260, IDC_SET_HOTKEY_KEY);
+            mk(L"BUTTON", en ? L"Hotkeys" : L"Горячие клавиши", BS_OWNERDRAW, 12, 186, 510, 188, IDC_SET_GROUP_HOTKEYS);
+            mk(L"LISTBOX", L"", LBS_NOTIFY | WS_VSCROLL | WS_BORDER, 24, 210, 240, 150, IDC_SET_HOTKEY_LIST);
+            mk(L"BUTTON", L"Ctrl", BS_OWNERDRAW, 284, 218, 70, 22, IDC_SET_HOTKEY_CTRL);
+            mk(L"BUTTON", L"Shift", BS_OWNERDRAW, 356, 218, 70, 22, IDC_SET_HOTKEY_SHIFT);
+            mk(L"BUTTON", L"Alt", BS_OWNERDRAW, 428, 218, 70, 22, IDC_SET_HOTKEY_ALT);
+            mk(L"STATIC", en ? L"Key:" : L"Клавиша:", SS_LEFT, 284, 250, 80, 20, 0);
+            HWND combo = mk(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_BORDER, 284, 270, 214, 260, IDC_SET_HOTKEY_KEY);
             populate_hotkey_key_combo(combo);
-            mk(L"BUTTON", en ? L"Apply" : L"Применить", BS_OWNERDRAW, 284, 278, 100, 28, IDC_SET_HOTKEY_APPLY);
-            mk(L"BUTTON", en ? L"Reset" : L"Сбросить", BS_OWNERDRAW, 398, 278, 100, 28, IDC_SET_HOTKEY_RESET);
-            mk(L"BUTTON", en ? L"Clear" : L"Очистить", BS_OWNERDRAW, 284, 312, 100, 28, IDC_SET_HOTKEY_CLEAR);
+            mk(L"BUTTON", en ? L"Apply" : L"Применить", BS_OWNERDRAW, 284, 308, 100, 28, IDC_SET_HOTKEY_APPLY);
+            mk(L"BUTTON", en ? L"Reset" : L"Сбросить", BS_OWNERDRAW, 398, 308, 100, 28, IDC_SET_HOTKEY_RESET);
+            mk(L"BUTTON", en ? L"Clear" : L"Очистить", BS_OWNERDRAW, 284, 342, 100, 28, IDC_SET_HOTKEY_CLEAR);
             populate_hotkey_list(hwnd);
             load_selected_hotkey_controls(hwnd);
             CheckRadioButton(hwnd, IDC_SET_LANG_RU, IDC_SET_LANG_EN, g_str == &kEn ? IDC_SET_LANG_EN : IDC_SET_LANG_RU);
-            CheckDlgButton(hwnd, IDC_SET_LIGHT_MODE, g.light_mode ? BST_CHECKED : BST_UNCHECKED);
+            set_toggle_checked(GetDlgItem(hwnd, IDC_SET_LIGHT_MODE), g.light_mode);
+            set_toggle_checked(GetDlgItem(hwnd, IDC_SET_GAP_MARKERS), g.show_gap_markers);
             return 0;
         }
         case WM_COMMAND: {
             const int id = LOWORD(wp);
             HWND ctl = reinterpret_cast<HWND>(lp);
-            auto checked = [&]() { return SendMessageW(ctl, BM_GETCHECK, 0, 0) == BST_CHECKED; };
+            if (!ctl && id) ctl = GetDlgItem(hwnd, id);
+            auto checked = [&]() { return is_toggle_checked(ctl); };
             switch (id) {
                 case IDC_SET_LANG_RU:
                     if (HIWORD(wp) == BN_CLICKED && g_str != &kRu) { g_str = &kRu; save_runtime_settings(); rebuild_ui(); }
@@ -6804,10 +7248,19 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     if (HIWORD(wp) == BN_CLICKED && g_str != &kEn) { g_str = &kEn; save_runtime_settings(); rebuild_ui(); }
                     break;
                 case IDC_SET_LIGHT_MODE:
-                    if (HIWORD(wp) == BN_CLICKED) {
+                    if (HIWORD(wp) == BN_CLICKED || HIWORD(wp) == BN_DOUBLECLICKED) {
                         toggle_checked_state(ctl);
                         g.light_mode = checked();
                         save_runtime_settings();
+                        refresh_settings_controls();
+                    }
+                    return 0;
+                case IDC_SET_GAP_MARKERS:
+                    if (HIWORD(wp) == BN_CLICKED || HIWORD(wp) == BN_DOUBLECLICKED) {
+                        toggle_checked_state(ctl);
+                        g.show_gap_markers = checked();
+                        save_runtime_settings();
+                        InvalidateRect(g.main, nullptr, FALSE);
                         refresh_settings_controls();
                     }
                     return 0;
@@ -6831,9 +7284,9 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         fvirt = def.fvirt;
                         key = def.key;
                     } else if (id != IDC_SET_HOTKEY_CLEAR) {
-                        if (SendMessageW(GetDlgItem(hwnd, IDC_SET_HOTKEY_CTRL), BM_GETCHECK, 0, 0) == BST_CHECKED) fvirt |= FCONTROL;
-                        if (SendMessageW(GetDlgItem(hwnd, IDC_SET_HOTKEY_SHIFT), BM_GETCHECK, 0, 0) == BST_CHECKED) fvirt |= FSHIFT;
-                        if (SendMessageW(GetDlgItem(hwnd, IDC_SET_HOTKEY_ALT), BM_GETCHECK, 0, 0) == BST_CHECKED) fvirt |= FALT;
+                        if (is_toggle_checked(GetDlgItem(hwnd, IDC_SET_HOTKEY_CTRL))) fvirt |= FCONTROL;
+                        if (is_toggle_checked(GetDlgItem(hwnd, IDC_SET_HOTKEY_SHIFT))) fvirt |= FSHIFT;
+                        if (is_toggle_checked(GetDlgItem(hwnd, IDC_SET_HOTKEY_ALT))) fvirt |= FALT;
                         HWND combo = GetDlgItem(hwnd, IDC_SET_HOTKEY_KEY);
                         int sel = static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0));
                         if (sel != CB_ERR) key = static_cast<WORD>(SendMessageW(combo, CB_GETITEMDATA, sel, 0));
@@ -7004,11 +7457,11 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             mkbtn(g_str->theme_dark, IDW_THEME_DARK);
             HWND light_mode = CreateWindowExW(
                 0, L"BUTTON", g_str->light_mode,
-                WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | BS_AUTOCHECKBOX,
+                WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | BS_OWNERDRAW,
                 0, 0, 10, 10, hwnd,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDW_LIGHT_MODE)), inst, nullptr);
             SendMessageW(light_mode, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-            SendMessageW(light_mode, BM_SETCHECK, g.light_mode ? BST_CHECKED : BST_UNCHECKED, 0);
+            set_toggle_checked(light_mode, g.light_mode);
             mkstatic(g_str->light_mode_hint, IDW_LIGHT_HINT, font);
             mkstatic(welcome_actions_title_text(), IDW_ACTIONS_TITLE, g.bold_font ? g.bold_font : font);
             mkbtn(settings_button_text(), IDC_PTSETTINGS);
@@ -7066,7 +7519,7 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             };
             DrawTextW(
                 hdc,
-                L"Приложение разработал Мулеев Александр  |  al.muleev@gmail.com",
+                welcome_author_credit_text(),
                 -1,
                 &credit,
                 DT_RIGHT | DT_BOTTOM | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
@@ -7083,7 +7536,11 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 case IDM_HOTKEYS: show_hotkeys(); return 0;
                 case IDW_START: ShowWindow(hwnd, SW_HIDE); show_ui_controls(); return 0;
                 case IDW_LIGHT_MODE:
-                    g.light_mode = SendMessageW(GetDlgItem(hwnd, IDW_LIGHT_MODE), BM_GETCHECK, 0, 0) == BST_CHECKED;
+                    if (HIWORD(wp) == BN_CLICKED || HIWORD(wp) == BN_DOUBLECLICKED) {
+                        HWND light = GetDlgItem(hwnd, IDW_LIGHT_MODE);
+                        toggle_checked_state(light);
+                        g.light_mode = is_toggle_checked(light);
+                    }
                     save_runtime_settings();
                     if (g.settings_wnd) refresh_settings_controls();
                     return 0;
@@ -7119,6 +7576,14 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             if (ctl_id == IDC_PTSETTINGS || ctl_id == IDM_HOTKEYS) {
                 draw_welcome_action_button(dc, r, txt, pressed, false, false);
+                return TRUE;
+            }
+            if (ctl_id == IDW_LIGHT_MODE) {
+                draw_themed_check_control(
+                    dc, r, txt,
+                    is_toggle_checked(dis->hwndItem), pressed,
+                    IsWindowEnabled(dis->hwndItem) != FALSE,
+                    false, false, g_theme->btn_bg);
                 return TRUE;
             }
             draw_themed_button(dc, r, txt, pressed, active, false);
@@ -7238,7 +7703,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g.ui_font = CreateFontW(-15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                     CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-            NONCLIENTMETRICSW ncm = { sizeof(ncm) };
+            NONCLIENTMETRICSW ncm{};
+            ncm.cbSize = sizeof(ncm);
             if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0)) {
                 g.menu_font = CreateFontIndirectW(&ncm.lfMenuFont);
             }
@@ -7258,7 +7724,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             g.menu = make_menu();
             SetMenu(hwnd, g.menu);
-            MENUINFO mi = { sizeof(mi) };
+            MENUINFO mi{};
+            mi.cbSize = sizeof(mi);
             mi.fMask = MIM_BACKGROUND | MIM_APPLYTOSUBMENUS;
             mi.hbrBack = CreateSolidBrush(g_theme->bg_toolbar);
             SetMenuInfo(g.menu, &mi);
@@ -7339,7 +7806,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             };
             for (const auto& seed : point_toggle_seeds) {
                 HWND c = mk_panel_ctl(L"BUTTON", seed.text, BS_OWNERDRAW, seed.id, g.side_point_controls);
-                if (c) SendMessageW(c, BM_SETCHECK, seed.on ? BST_CHECKED : BST_UNCHECKED, 0);
+                if (c) set_toggle_checked(c, seed.on);
             }
             g.side_point_color_current = mk_panel_btn(point_current_color_button_text(), IDC_SIDE_POINT_COLOR_CURRENT, g.side_point_controls);
             g.side_point_label_groups = mk_panel_ctl(L"STATIC", point_group_list_title(), SS_LEFT, 0, g.side_point_controls);
@@ -7876,7 +8343,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     if (index >= 0 && index < static_cast<int>(g.point_groups.size())) {
                         const SettingsSnapshot before = capture_settings_snapshot();
                         toggle_checked_state(g.side_point_group_visible);
-                        const bool checked = SendMessageW(g.side_point_group_visible, BM_GETCHECK, 0, 0) == BST_CHECKED;
+                        const bool checked = is_toggle_checked(g.side_point_group_visible);
                         g.point_groups[static_cast<std::size_t>(index)].visible = checked;
                         record_settings_change(before);
                         save_runtime_settings();
@@ -7984,7 +8451,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     const SettingsSnapshot before = capture_settings_snapshot();
                     toggle_checked_state(GetDlgItem(hwnd, id));
                     auto checked = [&](int ctl_id) {
-                        return SendMessageW(GetDlgItem(hwnd, ctl_id), BM_GETCHECK, 0, 0) == BST_CHECKED;
+                        return is_toggle_checked(GetDlgItem(hwnd, ctl_id));
                     };
                     g.pdisp.number = checked(IDC_SIDE_PT_NUM);
                     g.pdisp.x = checked(IDC_SIDE_PT_X);
@@ -8007,7 +8474,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 const SettingsSnapshot before = capture_settings_snapshot();
                 g.side_selected_channel = ci;
                 toggle_checked_state(g.checks[ci]);
-                g.visible[ci] = (SendMessageW(g.checks[ci], BM_GETCHECK, 0, 0) == BST_CHECKED);
+                g.visible[ci] = is_toggle_checked(g.checks[ci]);
                 record_settings_change(before);
                 load_side_transform_controls();
                 InvalidateRect(hwnd, nullptr, TRUE);
@@ -8117,9 +8584,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case WM_LBUTTONDOWN: {
             finish_channel_rename_if_click_outside(hwnd);
-            if (!has_data()) return 0;
-            const RECT p = plot_rect();
             const int mx = GET_X_LPARAM(lp), my = GET_Y_LPARAM(lp);
+            const RECT p = plot_rect();
+            if (!has_data()) {
+                if (mx >= p.left && mx <= p.right && my >= p.top && my <= p.bottom) {
+                    open_file();
+                }
+                return 0;
+            }
 
             // --- Legend click handling (toggle / solo) ---
             if (mx >= g_legend_box.left && mx < g_legend_box.right &&
@@ -8134,8 +8606,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                             for (std::size_t j = 0; j < g.visible.size(); ++j) {
                                 g.visible[j] = (static_cast<int>(j) == ci);
                                 if (j < g.checks.size())
-                                    SendMessageW(g.checks[j], BM_SETCHECK,
-                                        g.visible[j] ? BST_CHECKED : BST_UNCHECKED, 0);
+                                    set_toggle_checked(g.checks[j], g.visible[j] != 0);
                             }
                             record_settings_change(before);
                         } else {
@@ -8143,13 +8614,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                             const SettingsSnapshot before = capture_settings_snapshot();
                             g.visible[ci] = !g.visible[ci];
                             if (ci < static_cast<int>(g.checks.size()))
-                                SendMessageW(g.checks[ci], BM_SETCHECK,
-                                    g.visible[ci] ? BST_CHECKED : BST_UNCHECKED, 0);
+                                set_toggle_checked(g.checks[ci], g.visible[ci] != 0);
                             record_settings_change(before);
                         }
                         InvalidateRect(hwnd, nullptr, TRUE);
                         return 0;
                     }
+                }
+            }
+
+            if (!g.freq_mode && g.show_gap_markers) {
+                const int gap_index = hit_test_gap_marker(mx, my);
+                if (gap_index >= 0) {
+                    show_gap_details_dialog(hwnd, gap_index);
+                    return 0;
                 }
             }
 

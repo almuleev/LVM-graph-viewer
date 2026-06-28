@@ -14,18 +14,11 @@ $version = git describe --tags --abbrev=0 2>$null
 if (-not $version) { $version = "v0.0.0" }
 
 $outName = "LVM-graph-viewer-$version-win-x64.exe"
-$versionHeader = Join-Path $PSScriptRoot "build_version.hpp"
-
-@"
-#pragma once
-
-#ifndef APP_VERSION_W
-#define APP_VERSION_W L"$version"
-#endif
-"@ | Set-Content -LiteralPath $versionHeader -Encoding UTF8
+$versionDefine = '-DAPP_VERSION_W=L\"' + $version + '\"'
 
 $flags = @(
     "-std=c++17", "-O2", "-finput-charset=UTF-8", "-municode", "-static", "-mwindows",
+    $versionDefine,
     "-o", $outName,
     "gui_main.cpp", "lvm_parser.cpp", "fft.cpp", "analysis.cpp",
     "-lcomdlg32", "-lgdi32", "-luser32", "-lgdiplus", "-lcomctl32"
