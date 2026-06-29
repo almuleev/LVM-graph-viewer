@@ -9568,10 +9568,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             HDROP hDrop = reinterpret_cast<HDROP>(wp);
             UINT count = DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);
             if (count > 0) {
-                wchar_t path[MAX_PATH];
-                if (DragQueryFileW(hDrop, 0, path, MAX_PATH)) {
-                    if (!load_path_interactive(path) && !g.last_error.empty())
-                        MessageBoxW(hwnd, to_w(g.last_error).c_str(), g_str->msg_read_err, MB_ICONERROR | MB_OK);
+                UINT len = DragQueryFileW(hDrop, 0, nullptr, 0);
+                if (len > 0) {
+                    std::vector<wchar_t> path(static_cast<size_t>(len) + 1, L'\0');
+                    if (DragQueryFileW(hDrop, 0, path.data(), static_cast<UINT>(path.size()))) {
+                        if (!load_path_interactive(path.data()) && !g.last_error.empty())
+                            MessageBoxW(hwnd, to_w(g.last_error).c_str(), g_str->msg_read_err, MB_ICONERROR | MB_OK);
+                    }
                 }
             }
             DragFinish(hDrop);
