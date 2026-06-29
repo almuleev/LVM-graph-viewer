@@ -285,6 +285,13 @@ bool scan_time_bounds(const std::string& path, double& out_start, double& out_en
         return false;
     }
 
+    const auto normalize_bound = [](double v) {
+        return (std::isfinite(v) && std::fabs(v) < 1e-12) ? 0.0 : v;
+    };
+    first_time = normalize_bound(first_time);
+    last_time = normalize_bound(last_time);
+    if (last_time < first_time) std::swap(last_time, first_time);
+
     out_start = first_time;
     out_end = last_time;
     return true;
@@ -465,7 +472,7 @@ Dataset read_lvm_file(const std::string& path, const LoadOptions& options, bool 
     std::vector<std::string> kept_names;
     for (std::size_t i = 1; i < columns.size(); ++i) {
         if (i < column_has_value.size() && column_has_value[i]) {
-            kept_names.push_back("Channel_" + std::to_string(i));
+            kept_names.push_back("Channel_" + std::to_string(kept_channels.size() + 1));
             kept_channels.push_back(std::move(columns[i]));
         }
     }
@@ -539,11 +546,13 @@ std::vector<std::string> drop_duplicate_time_channels(Dataset& ds,
     };
 
     std::vector<std::string> dropped;
+    const std::vector<std::vector<double>> original_channels = ds.channels;
+    const std::vector<std::string> original_names = ds.names;
     std::vector<std::vector<double>> kept_channels;
     std::vector<std::string> kept_names;
 
-    for (std::size_t c = 0; c < ds.channels.size(); ++c) {
-        const auto& col = ds.channels[c];
+    for (std::size_t c = 0; c < original_channels.size(); ++c) {
+        const auto& col = original_channels[c];
         bool any_valid = false;
         bool duplicate = true;
         for (std::size_t r = 0; r < col.size() && r < raw_time.size(); ++r) {
@@ -555,17 +564,15 @@ std::vector<std::string> drop_duplicate_time_channels(Dataset& ds,
             }
         }
         if (any_valid && duplicate) {
-            dropped.push_back(ds.names[c]);
+            if (c < original_names.size()) dropped.push_back(original_names[c]);
         } else {
-            kept_names.push_back(std::move(ds.names[c]));
-            kept_channels.push_back(std::move(ds.channels[c]));
+            if (c < original_names.size()) kept_names.push_back(original_names[c]);
+            kept_channels.push_back(col);
         }
     }
 
-    if (!dropped.empty()) {
-        ds.channels = std::move(kept_channels);
-        ds.names = std::move(kept_names);
-    }
+    ds.channels = std::move(kept_channels);
+    ds.names = std::move(kept_names);
     return dropped;
 }
 

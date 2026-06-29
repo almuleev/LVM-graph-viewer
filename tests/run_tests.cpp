@@ -142,7 +142,6 @@ void test_make_monotonic_equal_times() {
     check_near(t[2], 0.2, 1e-12, "duplicate timestamp advanced by the fallback step");
 }
 
-void test_drop_duplicate_time() {
 void test_make_monotonic_backward_jump() {
     std::printf("test_make_monotonic_backward_jump\n");
     std::vector<double> t = {0.0, 0.1, 0.05, 0.15};
@@ -154,6 +153,7 @@ void test_make_monotonic_backward_jump() {
     check(t[2] > t[1], "reordered point is moved ahead of the previous sample");
 }
 
+void test_drop_duplicate_time() {
     std::printf("test_drop_duplicate_time\n");
     // Channel_1 duplicates time exactly; Channel_2 is real data.
     const std::string content =
@@ -170,6 +170,18 @@ void test_make_monotonic_backward_jump() {
     const auto dropped = lvm::drop_duplicate_time_channels(ds, raw_time);
     check(dropped.size() == 1 && dropped[0] == "Channel_1", "Channel_1 dropped as time dup");
     check(ds.channel_count() == 1 && ds.names[0] == "Channel_2", "Channel_2 remains");
+}
+
+void test_reference_test_lvm() {
+    std::printf("test_reference_test_lvm\n");
+    lvm::Dataset ds = lvm::read_lvm_file("lvm_files_for_tests/test.lvm");
+    check(ds.ok, "reference test.lvm parses");
+    check(ds.rows() == 10000, "reference test.lvm row count");
+    check(ds.channel_count() == 3, "reference test.lvm channel count");
+    if (ds.ok && ds.rows() == 10000 && ds.channel_count() == 3) {
+        check_near(ds.time.front(), 0.0, 1e-12, "reference time starts at zero");
+        check_near(ds.time.back(), 9.999, 1e-12, "reference time ends at 9.999");
+    }
 }
 
 void test_fft_peak() {
@@ -254,7 +266,9 @@ int main() {
     test_decimal_comma();
     test_multi_header();
     test_make_monotonic_equal_times();
+    test_make_monotonic_backward_jump();
     test_drop_duplicate_time();
+    test_reference_test_lvm();
     test_fft_peak();
     test_fft_nyquist_amplitude();
     test_fft_sample_cap_too_small();
@@ -263,4 +277,3 @@ int main() {
     std::printf("\n%d checks, %d failure(s)\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }
-    test_make_monotonic_backward_jump();
