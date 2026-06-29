@@ -172,12 +172,48 @@ void test_drop_duplicate_time() {
     check(ds.channel_count() == 1 && ds.names[0] == "Channel_2", "Channel_2 remains");
 }
 
+void test_interleaved_channel_names() {
+    std::printf("test_interleaved_channel_names\n");
+    const std::string content =
+        "LabVIEW Measurement\n"
+        "Writer_Version\t0.92\n"
+        "Reader_Version\t1\n"
+        "Separator\tTab\n"
+        "Multi_Headings\tYes\n"
+        "X_Columns\tMulti\n"
+        "***End_of_Header***\n"
+        "Channels\t8\t\t\t\t\t\t\t\n"
+        "Samples\t2\t2\t2\t2\t2\t2\t2\t2\n"
+        "Date\t2009/05/15\t2009/05/15\t2009/05/15\t2009/05/15\t2009/05/15\t2009/05/15\t2009/05/15\t2009/05/15\n"
+        "Time\t00:00:00,000\t00:00:00,000\t00:00:00,000\t00:00:00,000\t00:00:00,000\t00:00:00,000\t00:00:00,000\t00:00:00,000\n"
+        "X0\t0\t0\t0\t0\t0\t0\t0\t0\n"
+        "Delta_X\t0.1\t0.1\t0.1\t0.1\t0.1\t0.1\t0.1\t0.1\n"
+        "***End_of_Header***\n"
+        "X_Value\tg1\tX_Value\tg2\tX_Value\tg3\tX_Value\tg4\tX_Value\tg5\tX_Value\tg6\tX_Value\tg7\tX_Value\tg8\tComment\n"
+        "0.0\t1.0\t0.0\t2.0\t0.0\t3.0\t0.0\t4.0\t0.0\t5.0\t0.0\t6.0\t0.0\t7.0\t0.0\t8.0\tok\n"
+        "0.1\t1.1\t0.1\t2.1\t0.1\t3.1\t0.1\t4.1\t0.1\t5.1\t0.1\t6.1\t0.1\t7.1\t0.1\t8.1\tok\n";
+    const std::string path = write_temp("interleaved_names.lvm", content);
+    lvm::Dataset ds = lvm::read_lvm_file(path);
+    check(ds.ok, "interleaved file parses");
+    check(ds.channel_count() == 15, "interleaved file initially has 15 channels before de-dup");
+
+    const std::vector<double> raw_time = ds.raw_time.empty() ? ds.time : ds.raw_time;
+    const auto dropped = lvm::drop_duplicate_time_channels(ds, raw_time);
+    check(dropped.size() == 7, "seven duplicate time columns dropped");
+    check(ds.channel_count() == 8, "eight data channels remain");
+    const std::vector<std::string> expected = {"g1", "g2", "g3", "g4", "g5", "g6", "g7", "g8"};
+    check(ds.names == expected, "channel names preserved as g1..g8");
+}
+
 void test_reference_test_lvm() {
     std::printf("test_reference_test_lvm\n");
     lvm::Dataset ds = lvm::read_lvm_file("lvm_files_for_tests/test.lvm");
     check(ds.ok, "reference test.lvm parses");
     check(ds.rows() == 10000, "reference test.lvm row count");
     check(ds.channel_count() == 3, "reference test.lvm channel count");
+    check(ds.names.size() == 3 && ds.names[0] == "Channel_1" && ds.names[1] == "Channel_2" &&
+              ds.names[2] == "Channel_3",
+          "reference test.lvm channel names");
     if (ds.ok && ds.rows() == 10000 && ds.channel_count() == 3) {
         check_near(ds.time.front(), 0.0, 1e-12, "reference time starts at zero");
         check_near(ds.time.back(), 9.999, 1e-12, "reference time ends at 9.999");
@@ -268,6 +304,7 @@ int main() {
     test_make_monotonic_equal_times();
     test_make_monotonic_backward_jump();
     test_drop_duplicate_time();
+    test_interleaved_channel_names();
     test_reference_test_lvm();
     test_fft_peak();
     test_fft_nyquist_amplitude();

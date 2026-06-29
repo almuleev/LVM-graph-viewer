@@ -189,6 +189,10 @@ enum {
     IDC_SET_POINT_GROUP_NEW,
     IDC_SET_LIGHT_MODE = 5130,
     IDC_SET_GAP_MARKERS,
+    IDC_SET_AXIS_X_LABEL_STATIC,
+    IDC_SET_AXIS_X_LABEL_EDIT,
+    IDC_SET_AXIS_Y_LABEL_STATIC,
+    IDC_SET_AXIS_Y_LABEL_EDIT,
 
     IDC_SET_GROUP_GENERAL = 5150,
     IDC_SET_GROUP_TRANSFORM,
@@ -403,6 +407,7 @@ const int IDC_RANGE_PROMPT_START_EDIT = 6203;
 const int IDC_RANGE_PROMPT_END_EDIT = 6204;
 const int IDC_RANGE_PROMPT_OK = 6205;
 const int IDC_RANGE_PROMPT_CANCEL = 6206;
+const int IDC_RANGE_PROMPT_AUTOFILL = 6210;
 const int IDC_HOTKEYS_DIALOG_LIST = 6207;
 const int IDC_HOTKEYS_DIALOG_CLOSE = 6208;
 const int IDC_LOADING_CANCEL = 6209;
@@ -479,10 +484,10 @@ static const Strings kRu = {
     L"Файл", L"Вид", L"Точки", L"Линии", L"Маркеры", L"Справка",
     L"Открыть файл…\tCtrl+O", L"Сохранить PNG…\tCtrl+S", L"Сохранить CSV…\tCtrl+E", L"Отменить\tCtrl+Z", L"Повторить\tCtrl+Shift+Z", L"Выход\tAlt+F4",
     L"Время / Гц\tM", L"Увеличить\t+", L"Уменьшить\t−", L"Сбросить вид\tHome", L"Автомасштабирование", L"Сглаживание\tC", L"Вертикальное панорамирование\tP", L"Play / Pause\tПробел", L"Тёмная тема\tT", L"Скорость",
-    L"Точки\tV", L"Настройки…", L"Очистить\tDelete",
+    L"Точки\tV", L"Настройки", L"Очистить\tDelete",
     L"Вертикальная\tL", L"Горизонтальная\tH", L"Очистить",
     L"Добавить\tK", L"Очистить",
-    L"Горячие клавиши…\tF1", L"О программе…",
+    L"Горячие клавиши\tF1", L"О программе",
     L"Открыть", L"PNG", L"CSV", L"Время/Гц", L"▶ Старт", L"⏸ Пауза", L"Точки", L"Сброс", L"АвтоМасштаб", L"Настройки",
     L"Каналы",
     L"Время", L"Гц (FFT)", L"Каналов", L"Точек", L"Окно", L"Y: авто", L"Y: фикс.", L"Линий", L"Маркеров", L"Скорость",
@@ -541,10 +546,10 @@ static const Strings kEn = {
     L"File", L"View", L"Points", L"Lines", L"Markers", L"Help",
     L"Open file…\tCtrl+O", L"Save PNG…\tCtrl+S", L"Save CSV…\tCtrl+E", L"Undo\tCtrl+Z", L"Redo\tCtrl+Shift+Z", L"Exit\tAlt+F4",
     L"Time / Hz\tM", L"Zoom in\t+", L"Zoom out\t−", L"Reset view\tHome", L"Auto zoom", L"Smoothing\tC", L"Vertical pan\tP", L"Play / Pause\tSpace", L"Dark theme\tT", L"Speed",
-    L"Points\tV", L"Settings…", L"Clear\tDelete",
+    L"Points\tV", L"Settings", L"Clear\tDelete",
     L"Vertical\tL", L"Horizontal\tH", L"Clear",
     L"Add\tK", L"Clear",
-    L"Keyboard shortcuts…\tF1", L"About…",
+    L"Keyboard shortcuts\tF1", L"About",
     L"Open", L"PNG", L"CSV", L"Time/Hz", L"▶ Play", L"⏸ Pause", L"Points", L"Reset", L"Auto zoom", L"Settings",
     L"Channels",
     L"Time", L"Hz (FFT)", L"Channels", L"Points", L"Window", L"Y: auto", L"Y: fixed", L"Lines", L"Markers", L"Speed",
@@ -625,6 +630,7 @@ struct PointGroup {
     std::wstring name;
     COLORREF color = RGB(0, 120, 215);
     bool visible = true;
+    PointDisplay display;
     std::vector<std::pair<double, double>> points;
 };
 
@@ -721,6 +727,8 @@ struct App {
     bool measure_mode = false;
     bool snap_to_data = true;       // snap markers to the nearest real sample
     PointDisplay pdisp;             // which read-outs to draw at markers
+    std::wstring axis_x_label = L"X"; // graph label shown on the X axis corner
+    std::wstring axis_y_label = L"Y"; // graph label shown on the Y axis corner
     COLORREF marker_color = g_theme->marker_color;
     std::vector<PointGroup> point_groups;
     int active_point_group = -1;
@@ -815,7 +823,6 @@ struct App {
     int side_content_height_points = 0;
     HWND side_tab_channels = nullptr;
     HWND side_tab_points = nullptr;
-    HWND side_scrollbar = nullptr;
     HWND side_channel_hint = nullptr;
     HWND side_global_formula_label = nullptr;
     HWND side_global_formula_edit = nullptr;
@@ -836,6 +843,7 @@ struct App {
     HWND side_point_color_current = nullptr;
     HWND side_point_group_color = nullptr;
     HWND side_point_label_groups = nullptr;
+    bool updating_axis_label_edits = false;
     std::vector<HWND> side_channel_controls;
     std::vector<HWND> side_point_controls;
 
@@ -914,7 +922,6 @@ struct SettingsSnapshot {
     std::vector<COLORREF> channel_colors;
     std::wstring global_formula;
     std::vector<std::wstring> channel_formulas;
-    PointDisplay pdisp;
     bool snap_to_data = true;
     COLORREF marker_color = RGB(0, 120, 215);
     std::vector<PointGroup> point_groups;
@@ -987,6 +994,8 @@ bool record_settings_change(const SettingsSnapshot& before);
 bool is_toggle_checked(HWND hwnd);
 void set_toggle_checked(HWND hwnd, bool checked);
 void toggle_checked_state(HWND hwnd);
+std::wstring channel_display_label(std::size_t ci);
+std::wstring normalize_axis_label_text(const std::wstring& text, const wchar_t* fallback);
 std::wstring time_gap_details_text(double duration, long long estimated_missing_samples);
 const wchar_t* time_gap_details_title();
 int hit_test_gap_marker(int x, int y);
@@ -1102,6 +1111,14 @@ const wchar_t* side_pt_dist_text() {
 
 const wchar_t* side_pt_snap_text() {
     return (g_str == &kEn) ? L"Snap" : L"Привязка";
+}
+
+const wchar_t* axis_x_label_text() {
+    return (g_str == &kEn) ? L"X label:" : L"Буква X:";
+}
+
+const wchar_t* axis_y_label_text() {
+    return (g_str == &kEn) ? L"Y label:" : L"Буква Y:";
 }
 
 std::wstring default_channel_formula_text() {
@@ -1537,6 +1554,22 @@ void clear_measure_point_groups() {
     g.active_point_group = -1;
 }
 
+PointDisplay* active_point_display() {
+    if (PointGroup* group = active_point_group()) return &group->display;
+    return nullptr;
+}
+
+const PointDisplay* active_point_display_readonly() {
+    if (const PointGroup* group = active_point_group_readonly()) return &group->display;
+    return nullptr;
+}
+
+void sync_point_display_from_active_group() {
+    if (const PointDisplay* display = active_point_display_readonly()) {
+        g.pdisp = *display;
+    }
+}
+
 void erase_point_group(std::size_t index) {
     if (index >= g.point_groups.size()) return;
     g.point_groups.erase(g.point_groups.begin() + static_cast<std::ptrdiff_t>(index));
@@ -1549,6 +1582,7 @@ void erase_point_group(std::size_t index) {
     } else if (g.active_point_group == static_cast<int>(index)) {
         g.active_point_group = static_cast<int>(std::min<std::size_t>(index, g.point_groups.size() - 1));
     }
+    sync_point_display_from_active_group();
 }
 
 int create_point_group(COLORREF color) {
@@ -1558,8 +1592,14 @@ int create_point_group(COLORREF color) {
     else group.name = L"Группа " + std::to_wstring(index + 1);
     group.color = color;
     group.visible = true;
+    if (const PointDisplay* active_display = active_point_display_readonly()) {
+        group.display = *active_display;
+    } else {
+        group.display = g.pdisp;
+    }
     g.point_groups.push_back(group);
     g.active_point_group = static_cast<int>(g.point_groups.size()) - 1;
+    sync_point_display_from_active_group();
     return g.active_point_group;
 }
 
@@ -1636,7 +1676,6 @@ SettingsSnapshot capture_settings_snapshot() {
     snapshot.channel_colors = g_channel_colors;
     snapshot.global_formula = g.global_formula;
     snapshot.channel_formulas = g.channel_formulas;
-    snapshot.pdisp = g.pdisp;
     snapshot.snap_to_data = g.snap_to_data;
     snapshot.marker_color = g.marker_color;
     snapshot.point_groups = g.point_groups;
@@ -1662,6 +1701,13 @@ bool settings_snapshot_differs(const SettingsSnapshot& a, const SettingsSnapshot
             if (lhs[i].name != rhs[i].name ||
                 lhs[i].color != rhs[i].color ||
                 lhs[i].visible != rhs[i].visible ||
+                lhs[i].display.number != rhs[i].display.number ||
+                lhs[i].display.x != rhs[i].display.x ||
+                lhs[i].display.y != rhs[i].display.y ||
+                lhs[i].display.dx != rhs[i].display.dx ||
+                lhs[i].display.dy != rhs[i].display.dy ||
+                lhs[i].display.inv_dt != rhs[i].display.inv_dt ||
+                lhs[i].display.dist != rhs[i].display.dist ||
                 lhs[i].points != rhs[i].points) {
                 return false;
             }
@@ -1698,13 +1744,6 @@ bool settings_snapshot_differs(const SettingsSnapshot& a, const SettingsSnapshot
            a.channel_colors != b.channel_colors ||
            a.global_formula != b.global_formula ||
            a.channel_formulas != b.channel_formulas ||
-           a.pdisp.number != b.pdisp.number ||
-           a.pdisp.x != b.pdisp.x ||
-           a.pdisp.y != b.pdisp.y ||
-           a.pdisp.dx != b.pdisp.dx ||
-           a.pdisp.dy != b.pdisp.dy ||
-           a.pdisp.inv_dt != b.pdisp.inv_dt ||
-           a.pdisp.dist != b.pdisp.dist ||
            a.snap_to_data != b.snap_to_data ||
            a.marker_color != b.marker_color ||
            !same_point_groups(a.point_groups, b.point_groups) ||
@@ -1728,9 +1767,10 @@ void sync_channel_controls_from_state() {
             set_toggle_checked(g.checks[i], g.visible[i] != 0);
         }
     }
-    for (std::size_t i = 0; i < g.check_labels.size() && i < g.channel_labels.size(); ++i) {
+    for (std::size_t i = 0; i < g.check_labels.size() && i < g.ds.channel_count(); ++i) {
         if (g.check_labels[i]) {
-            SetWindowTextW(g.check_labels[i], g.channel_labels[i].c_str());
+            const std::wstring label = channel_display_label(i);
+            SetWindowTextW(g.check_labels[i], label.c_str());
         }
     }
     if (g.measure) {
@@ -1762,11 +1802,11 @@ void apply_settings_snapshot(const SettingsSnapshot& snapshot) {
     g.global_formula = snapshot.global_formula;
     g.channel_formulas = snapshot.channel_formulas;
     rebuild_formula_cache_from_state();
-    g.pdisp = snapshot.pdisp;
     g.snap_to_data = snapshot.snap_to_data;
     g.marker_color = snapshot.marker_color;
     g.point_groups = snapshot.point_groups;
     g.active_point_group = snapshot.active_point_group;
+    sync_point_display_from_active_group();
     g.guides = snapshot.guides;
     g.markers = snapshot.markers;
     g.active_marker = snapshot.active_marker;
@@ -1859,6 +1899,7 @@ void pop_undo() {
             break;
         default: break;
     }
+    sync_point_display_from_active_group();
     if (g.settings_wnd) populate_point_group_list(g.settings_wnd);
     refresh_side_panel_controls();
 }
@@ -1911,6 +1952,7 @@ void pop_redo() {
             break;
         default: break;
     }
+    sync_point_display_from_active_group();
     if (g.settings_wnd) populate_point_group_list(g.settings_wnd);
     refresh_side_panel_controls();
 }
@@ -2272,7 +2314,8 @@ void finish_channel_rename(bool apply) {
         GetWindowTextW(g.channel_edit, buf, 256);
         g.channel_labels[ci] = buf;
         if (ci < static_cast<int>(g.check_labels.size()) && g.check_labels[ci]) {
-            SetWindowTextW(g.check_labels[ci], g.channel_labels[ci].c_str());
+            const std::wstring label = channel_display_label(static_cast<std::size_t>(ci));
+            SetWindowTextW(g.check_labels[ci], label.c_str());
         }
         InvalidateRect(g.main, nullptr, TRUE);
     }
@@ -2336,7 +2379,7 @@ void start_channel_rename(int ci) {
     HINSTANCE inst = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(g.main, GWLP_HINSTANCE));
     HFONT font = g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
     g.channel_edit = CreateWindowExW(
-        WS_EX_CLIENTEDGE, L"EDIT", g.channel_labels[ci].c_str(),
+        WS_EX_CLIENTEDGE, L"EDIT", channel_display_label(static_cast<std::size_t>(ci)).c_str(),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
         r.left - 2, r.top - 1, (r.right - r.left) + 4, (r.bottom - r.top) + 2,
         g.main, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_CHAN_EDIT)), inst, nullptr);
@@ -2373,7 +2416,7 @@ void rebuild_checks() {
         g.checks.push_back(c);
 
         HWND lbl = CreateWindowExW(
-            0, L"STATIC", g.channel_labels[i].c_str(),
+            0, L"STATIC", channel_display_label(i).c_str(),
             WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | SS_LEFT | SS_NOTIFY | SS_CENTERIMAGE,
             0, 0, 10, 10, g.main,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_CHAN_LABEL_BASE + i)), inst, nullptr);
@@ -2453,6 +2496,10 @@ void load_side_transform_controls() {
 void load_side_point_group_controls() {
     const int index = side_selected_point_group();
     const bool valid = index >= 0 && index < static_cast<int>(g.point_groups.size());
+    if (valid) {
+        g.active_point_group = index;
+        sync_point_display_from_active_group();
+    }
     if (g.side_point_group_visible) {
         set_toggle_checked(
             g.side_point_group_visible,
@@ -2467,6 +2514,14 @@ void load_side_point_group_controls() {
         EnableWindow(g.side_point_group_name, valid);
     }
     if (g.side_point_group_rename) EnableWindow(g.side_point_group_rename, valid);
+    if (HWND num = GetDlgItem(g.main, IDC_SIDE_PT_NUM)) EnableWindow(num, valid);
+    if (HWND x = GetDlgItem(g.main, IDC_SIDE_PT_X)) EnableWindow(x, valid);
+    if (HWND y = GetDlgItem(g.main, IDC_SIDE_PT_Y)) EnableWindow(y, valid);
+    if (HWND dx = GetDlgItem(g.main, IDC_SIDE_PT_DX)) EnableWindow(dx, valid);
+    if (HWND dy = GetDlgItem(g.main, IDC_SIDE_PT_DY)) EnableWindow(dy, valid);
+    if (HWND invdt = GetDlgItem(g.main, IDC_SIDE_PT_INVDT)) EnableWindow(invdt, valid);
+    if (HWND dist = GetDlgItem(g.main, IDC_SIDE_PT_DIST)) EnableWindow(dist, valid);
+    if (HWND snap = GetDlgItem(g.main, IDC_SIDE_PT_SNAP)) EnableWindow(snap, TRUE);
 }
 
 void populate_side_point_group_list() {
@@ -2503,23 +2558,6 @@ void update_side_panel_scrollbar(int viewport_top, int content_height) {
     g.side_scroll_max = max(0, content_height - viewport_height);
     if (g.side_scroll_y > g.side_scroll_max) g.side_scroll_y = g.side_scroll_max;
     if (g.side_scroll_y < 0) g.side_scroll_y = 0;
-    if (!g.side_scrollbar) return;
-
-    if (!g.side_panel_visible || welcome_visible() || g.side_scroll_max <= 0) {
-        ShowWindow(g.side_scrollbar, SW_HIDE);
-        SetScrollPos(g.side_scrollbar, SB_CTL, 0, TRUE);
-        return;
-    }
-
-    SCROLLINFO si{};
-    si.cbSize = sizeof(si);
-    si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
-    si.nMin = 0;
-    si.nMax = content_height > 0 ? content_height - 1 : 0;
-    si.nPage = static_cast<UINT>(viewport_height);
-    si.nPos = g.side_scroll_y;
-    SetScrollInfo(g.side_scrollbar, SB_CTL, &si, TRUE);
-    ShowWindow(g.side_scrollbar, SW_SHOW);
 }
 
 void scroll_side_panel(int delta) {
@@ -2555,11 +2593,11 @@ void apply_side_panel_visibility() {
     const bool show = g.side_panel_visible && !welcome_visible();
     if (g.side_tab_channels) ShowWindow(g.side_tab_channels, show ? SW_SHOW : SW_HIDE);
     if (g.side_tab_points) ShowWindow(g.side_tab_points, show ? SW_SHOW : SW_HIDE);
-    if (!show && g.side_scrollbar) ShowWindow(g.side_scrollbar, SW_HIDE);
     set_side_panel_tab(g.side_panel_tab);
 }
 
 void refresh_side_panel_controls() {
+    sync_point_display_from_active_group();
     if (g.sidepanel_btn) SetWindowTextW(g.sidepanel_btn, side_panel_button_text());
     if (g.side_tab_channels) SetWindowTextW(g.side_tab_channels, side_tab_channels_text());
     if (g.side_tab_points) SetWindowTextW(g.side_tab_points, side_tab_points_text());
@@ -2602,6 +2640,8 @@ void refresh_side_panel_controls() {
 void redraw_button(HWND btn);
 void redraw_toolbar_buttons();
 void show_welcome(HINSTANCE inst);
+void raise_main_window();
+void enable_file_drop_support(HWND hwnd);
 
 void layout() {
     RECT rc;
@@ -2628,24 +2668,24 @@ void layout() {
 
     // Row 1: frequent global actions
     x = 8;
-    place(g.open, 100, 8);
+    place(g.open, text_button_width(g.open, 94, 32), 8);
     sep();
-    place(g.mode_time, 78, 8);
-    place(g.mode_freq, 88, 8);
-    place(g.play, 92, 8);
+    place(g.mode_time, text_button_width(g.mode_time, 72, 28), 8);
+    place(g.mode_freq, text_button_width(g.mode_freq, 82, 28), 8);
+    place(g.play, text_button_width(g.play, 88, 30), 8);
     sep();
-    place(g.reset, 80, 8);
-    place(g.autoy, text_button_width(g.autoy, 104, 28), 8);
+    place(g.reset, text_button_width(g.reset, 76, 28), 8);
+    place(g.autoy, text_button_width(g.autoy, 108, 34), 8);
 
     // Row 2: graph tools and settings
     x = 8;
-    place(g.measure, 80, 40);
-    place(g.marker_btn, 80, 40);
-    place(g.vline_btn, 80, 40);
-    place(g.hline_btn, 92, 40);
+    place(g.measure, text_button_width(g.measure, 72, 28), 40);
+    place(g.marker_btn, text_button_width(g.marker_btn, 72, 30), 40);
+    place(g.vline_btn, text_button_width(g.vline_btn, 78, 30), 40);
+    place(g.hline_btn, text_button_width(g.hline_btn, 84, 30), 40);
     sep();
-    place(g.ptsettings, 110, 40);
-    place(g.sidepanel_btn, 86, 40);
+    place(g.ptsettings, text_button_width(g.ptsettings, 108, 32), 40);
+    place(g.sidepanel_btn, text_button_width(g.sidepanel_btn, 92, 32), 40);
 
     const int panel_w = side_panel_width();
     const int panel_left = cw - panel_w;
@@ -2668,18 +2708,9 @@ void layout() {
     const int active_viewport_top = (g.side_panel_tab == 0) ? channels_viewport_top : points_viewport_top;
     const int active_content_estimate = (g.side_panel_tab == 0) ? channels_content_estimate : points_content_estimate;
     const int viewport_height = max(0, viewport_bottom - active_viewport_top);
-    const int scroll_w = GetSystemMetrics(SM_CXVSCROLL);
-    const bool need_scroll = g.side_panel_visible && !welcome_visible() && active_content_estimate > viewport_height;
-    const int content_w = max(
-        60,
-        panel_w - panel_pad_left - panel_pad_right - (need_scroll ? (scroll_w + 6) : 0));
+    const int content_w = max(60, panel_w - panel_pad_left - panel_pad_right);
     const bool show_channels = g.side_panel_visible && g.side_panel_tab == 0 && !welcome_visible();
     const bool show_points = g.side_panel_visible && g.side_panel_tab == 1 && !welcome_visible();
-
-    if (g.side_scrollbar) {
-        MoveWindow(g.side_scrollbar, panel_left + panel_w - scroll_w, active_viewport_top,
-                   scroll_w, viewport_height, FALSE);
-    }
 
     auto place_scrolled = [&](HWND ctl, int x0, int y_rel, int w, int h, int viewport_top, bool visible_in_tab) {
         if (!ctl) return;
@@ -2820,6 +2851,7 @@ bool current_time_yrange(double& ymin, double& ymax);
 bool current_freq_yrange(double& ymin, double& ymax);
 void set_mode(bool freq_mode);
 void invalidate_plot();
+void release_backbuffer();
 void rebuild_ui();
 void rebuild_accelerators();
 HMENU make_menu();
@@ -2880,6 +2912,32 @@ const wchar_t* guide_prompt_cancel_text() {
     return speed_prompt_cancel_text();
 }
 
+int prompt_button_width(HDC dc, const wchar_t* text, int min_width) {
+    SIZE sz{};
+    GetTextExtentPoint32W(dc, text, lstrlenW(text), &sz);
+    return std::max(min_width, static_cast<int>(sz.cx) + 28);
+}
+
+void draw_prompt_surface(HWND hwnd, HDC dc) {
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    HBRUSH outer = CreateSolidBrush(g_theme->bg_main);
+    FillRect(dc, &rc, outer);
+    DeleteObject(outer);
+
+    RECT card = rc;
+    InflateRect(&card, -2, -2);
+    fill_rounded_rect(dc, card, g_theme->bg_panel, g_theme->separator, 12);
+}
+
+const wchar_t* range_prompt_autofill_text() {
+    return (g_str == &kEn) ? L"Min / Max" : L"Мин / Макс";
+}
+
+double normalize_prompt_bound(double value) {
+    return (std::isfinite(value) && std::fabs(value) < 1e-12) ? 0.0 : value;
+}
+
 const wchar_t* guide_prompt_invalid_text() {
     return (g_str == &kEn)
         ? L"Enter a finite number, for example -1, 0, or 2.75."
@@ -2911,31 +2969,40 @@ LRESULT CALLBACK NumericPromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE: {
             HFONT font = g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+            HDC dc = GetDC(hwnd);
+            HGDIOBJ old_font = SelectObject(dc, font);
             CreateWindowExW(0, L"STATIC", g_numeric_prompt.label.c_str(),
                             WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX,
-                            16, 16, 336, 44, hwnd, nullptr,
+                            18, 16, 340, 44, hwnd, nullptr,
                             reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
             g_numeric_prompt.edit = CreateWindowExW(
                 WS_EX_CLIENTEDGE, L"EDIT", format_edit_number(g_numeric_prompt.value).c_str(),
                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
-                16, 66, 336, 24, hwnd,
+                18, 66, 340, 24, hwnd,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SPEED_PROMPT_EDIT)),
                 reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
+            const int ok_w = prompt_button_width(dc, g_numeric_prompt.apply_text.c_str(), 110);
+            const int cancel_w = prompt_button_width(dc, g_numeric_prompt.cancel_text.c_str(), 110);
+            const int button_gap = 10;
+            const int total_w = ok_w + cancel_w + button_gap;
+            int button_x = std::max(16, (384 - total_w) / 2);
             HWND ok = CreateWindowExW(
                 0, L"BUTTON", g_numeric_prompt.apply_text.c_str(),
                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
-                102, 104, 116, 28, hwnd,
+                button_x, 104, ok_w, 28, hwnd,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SPEED_PROMPT_OK)),
                 reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
             HWND cancel = CreateWindowExW(
                 0, L"BUTTON", g_numeric_prompt.cancel_text.c_str(),
                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
-                230, 104, 122, 28, hwnd,
+                button_x + ok_w + button_gap, 104, cancel_w, 28, hwnd,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SPEED_PROMPT_CANCEL)),
                 reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
-            if (g_numeric_prompt.edit) SendMessageW(g_numeric_prompt.edit, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
             if (ok) SendMessageW(ok, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
             if (cancel) SendMessageW(cancel, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            if (g_numeric_prompt.edit) SendMessageW(g_numeric_prompt.edit, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            SelectObject(dc, old_font);
+            ReleaseDC(hwnd, dc);
             HWND label = GetWindow(hwnd, GW_CHILD);
             if (label) SendMessageW(label, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
             return 0;
@@ -2969,11 +3036,14 @@ LRESULT CALLBACK NumericPromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_ERASEBKGND: {
             HDC dc = reinterpret_cast<HDC>(wp);
-            RECT rc{};
-            GetClientRect(hwnd, &rc);
-            HBRUSH b = CreateSolidBrush(g_theme->bg_panel);
-            FillRect(dc, &rc, b);
-            DeleteObject(b);
+            draw_prompt_surface(hwnd, dc);
+            return 1;
+        }
+        case WM_PAINT: {
+            PAINTSTRUCT ps{};
+            HDC dc = BeginPaint(hwnd, &ps);
+            draw_prompt_surface(hwnd, dc);
+            EndPaint(hwnd, &ps);
             return 1;
         }
         case WM_CTLCOLORSTATIC:
@@ -3002,9 +3072,9 @@ LRESULT CALLBACK NumericPromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case WM_CTLCOLOREDIT: {
             HDC dc = reinterpret_cast<HDC>(wp);
-            SetBkColor(dc, g_theme->bg_panel);
+            SetBkColor(dc, g_theme->bg_plot);
             SetTextColor(dc, g_theme->text_primary);
-            return reinterpret_cast<LRESULT>(g_panel_brush);
+            return reinterpret_cast<LRESULT>(g_input_brush ? g_input_brush : g_panel_brush);
         }
         case WM_DESTROY:
             g_numeric_prompt.done = true;
@@ -3019,6 +3089,19 @@ LRESULT CALLBACK RangePromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE: {
             HFONT font = g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+            HDC dc = GetDC(hwnd);
+            HGDIOBJ old_font = SelectObject(dc, font);
+            RECT client{};
+            GetClientRect(hwnd, &client);
+            const int client_w = std::max(0, static_cast<int>(client.right - client.left));
+            const int content_w = std::max(360, client_w - 36);
+            const int info_h = 42;
+            const int label_h = 18;
+            const int edit_h = 24;
+            const int start_label_y = 16 + info_h + 10;
+            const int start_edit_y = start_label_y + label_h + 4;
+            const int end_label_y = start_edit_y + edit_h + 10;
+            const int end_edit_y = end_label_y + label_h + 4;
             auto mkstatic = [&](const std::wstring& text, int x, int y, int w, int h) {
                 HWND ctl = CreateWindowExW(0, L"STATIC", text.c_str(),
                                            WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX,
@@ -3027,41 +3110,72 @@ LRESULT CALLBACK RangePromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 if (ctl) SendMessageW(ctl, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
                 return ctl;
             };
-            mkstatic(g_range_prompt.info_label, 16, 14, 388, 38);
-            mkstatic(g_range_prompt.start_label, 16, 60, 388, 18);
+            mkstatic(g_range_prompt.info_label, 18, 16, content_w, info_h);
+            mkstatic(g_range_prompt.start_label, 18, start_label_y, content_w, label_h);
             g_range_prompt.start_edit = CreateWindowExW(
                 WS_EX_CLIENTEDGE, L"EDIT", format_edit_number(g_range_prompt.start_value).c_str(),
                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
-                16, 82, 388, 24, hwnd,
+                18, start_edit_y, content_w, edit_h, hwnd,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_RANGE_PROMPT_START_EDIT)),
                 reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
-            mkstatic(g_range_prompt.end_label, 16, 116, 388, 18);
+            mkstatic(g_range_prompt.end_label, 18, end_label_y, content_w, label_h);
             g_range_prompt.end_edit = CreateWindowExW(
                 WS_EX_CLIENTEDGE, L"EDIT", format_edit_number(g_range_prompt.end_value).c_str(),
                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
-                16, 138, 388, 24, hwnd,
+                18, end_edit_y, content_w, edit_h, hwnd,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_RANGE_PROMPT_END_EDIT)),
+                reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
+            const int autofill_w = prompt_button_width(dc, range_prompt_autofill_text(), 98);
+            const int apply_w = prompt_button_width(dc, g_range_prompt.apply_text.c_str(), 116);
+            const int cancel_w = prompt_button_width(dc, g_range_prompt.cancel_text.c_str(), 88);
+            const int button_gap = 10;
+            const int total_w = autofill_w + apply_w + cancel_w + button_gap * 2;
+            int button_x = std::max(16, (client_w - total_w) / 2);
+            if (button_x + total_w > client_w - 16) {
+                button_x = std::max(16, client_w - 16 - total_w);
+            }
+            HWND autofill = CreateWindowExW(
+                0, L"BUTTON", range_prompt_autofill_text(),
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+                button_x, 178, autofill_w, 28, hwnd,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_RANGE_PROMPT_AUTOFILL)),
                 reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
             HWND ok = CreateWindowExW(
                 0, L"BUTTON", g_range_prompt.apply_text.c_str(),
                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
-                154, 178, 122, 28, hwnd,
+                button_x + autofill_w + button_gap, 178, apply_w, 28, hwnd,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_RANGE_PROMPT_OK)),
                 reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
             HWND cancel = CreateWindowExW(
                 0, L"BUTTON", g_range_prompt.cancel_text.c_str(),
                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
-                286, 178, 118, 28, hwnd,
+                button_x + autofill_w + button_gap + apply_w + button_gap, 178, cancel_w, 28, hwnd,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_RANGE_PROMPT_CANCEL)),
                 reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
+            if (autofill) SendMessageW(autofill, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
             if (g_range_prompt.start_edit) SendMessageW(g_range_prompt.start_edit, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
             if (g_range_prompt.end_edit) SendMessageW(g_range_prompt.end_edit, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
             if (ok) SendMessageW(ok, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
             if (cancel) SendMessageW(cancel, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            SelectObject(dc, old_font);
+            ReleaseDC(hwnd, dc);
             return 0;
         }
         case WM_COMMAND:
             switch (LOWORD(wp)) {
+                case IDC_RANGE_PROMPT_AUTOFILL: {
+                    g_range_prompt.start_value = g_range_prompt.min_value;
+                    g_range_prompt.end_value = g_range_prompt.max_value;
+                    if (g_range_prompt.start_edit) {
+                        SetWindowTextW(g_range_prompt.start_edit, format_edit_number(g_range_prompt.start_value).c_str());
+                        SendMessageW(g_range_prompt.start_edit, EM_SETSEL, 0, -1);
+                        SetFocus(g_range_prompt.start_edit);
+                    }
+                    if (g_range_prompt.end_edit) {
+                        SetWindowTextW(g_range_prompt.end_edit, format_edit_number(g_range_prompt.end_value).c_str());
+                    }
+                    return 0;
+                }
                 case IDC_RANGE_PROMPT_OK: {
                     double start = 0.0, end = 0.0;
                     wchar_t buf_start[128]{}, buf_end[128]{};
@@ -3101,11 +3215,14 @@ LRESULT CALLBACK RangePromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_ERASEBKGND: {
             HDC dc = reinterpret_cast<HDC>(wp);
-            RECT rc{};
-            GetClientRect(hwnd, &rc);
-            HBRUSH b = CreateSolidBrush(g_theme->bg_panel);
-            FillRect(dc, &rc, b);
-            DeleteObject(b);
+            draw_prompt_surface(hwnd, dc);
+            return 1;
+        }
+        case WM_PAINT: {
+            PAINTSTRUCT ps{};
+            HDC dc = BeginPaint(hwnd, &ps);
+            draw_prompt_surface(hwnd, dc);
+            EndPaint(hwnd, &ps);
             return 1;
         }
         case WM_CTLCOLORSTATIC:
@@ -3126,6 +3243,10 @@ LRESULT CALLBACK RangePromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 draw_welcome_action_button(dis->hDC, dis->rcItem, txt, pressed, true, false);
                 return TRUE;
             }
+            if (ctl_id == IDC_RANGE_PROMPT_AUTOFILL) {
+                draw_welcome_action_button(dis->hDC, dis->rcItem, txt, pressed, false, true);
+                return TRUE;
+            }
             if (ctl_id == IDC_RANGE_PROMPT_CANCEL) {
                 draw_welcome_action_button(dis->hDC, dis->rcItem, txt, pressed, false, false);
                 return TRUE;
@@ -3134,9 +3255,9 @@ LRESULT CALLBACK RangePromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case WM_CTLCOLOREDIT: {
             HDC dc = reinterpret_cast<HDC>(wp);
-            SetBkColor(dc, g_theme->bg_panel);
+            SetBkColor(dc, g_theme->bg_plot);
             SetTextColor(dc, g_theme->text_primary);
-            return reinterpret_cast<LRESULT>(g_panel_brush);
+            return reinterpret_cast<LRESULT>(g_input_brush ? g_input_brush : g_panel_brush);
         }
         case WM_DESTROY:
             g_range_prompt.done = true;
@@ -3229,29 +3350,38 @@ bool prompt_light_mode_window(double range_start, double range_end, double& out_
     const bool en = (g_str == &kEn);
     g_range_prompt.done = false;
     g_range_prompt.accepted = false;
+    range_start = normalize_prompt_bound(range_start);
+    range_end = normalize_prompt_bound(range_end);
+    if (!std::isfinite(range_start)) range_start = 0.0;
+    if (!std::isfinite(range_end)) range_end = range_start + 10.0;
+    if (range_end < range_start) std::swap(range_start, range_end);
+    if (range_end <= range_start) range_end = range_start + 10.0;
+
     g_range_prompt.min_value = range_start;
     g_range_prompt.max_value = range_end;
-    g_range_prompt.start_value = std::clamp(g.light_mode_open_start, range_start, range_end);
-    g_range_prompt.end_value = std::clamp(g.light_mode_open_end, g_range_prompt.start_value + 1e-9, range_end);
+    g_range_prompt.start_value = normalize_prompt_bound(std::clamp(g.light_mode_open_start, range_start, range_end));
+    g_range_prompt.end_value = normalize_prompt_bound(std::clamp(g.light_mode_open_end, g_range_prompt.start_value + 1e-9, range_end));
     if (g_range_prompt.end_value <= g_range_prompt.start_value) {
         g_range_prompt.end_value = std::min(range_end, g_range_prompt.start_value + 10.0);
     }
     g_range_prompt.title = g_str->light_mode_range_title;
-    g_range_prompt.info_label = (en ? L"Available range: " : L"Доступный диапазон: ") +
+    g_range_prompt.info_label = (en ? L"Available range:\r\n" : L"Доступный диапазон:\r\n") +
                                 format_edit_number(range_start) + L" .. " +
                                 format_edit_number(range_end) + (en ? L" s" : L" c");
     g_range_prompt.start_label = g_str->light_mode_range_start;
     g_range_prompt.end_label = g_str->light_mode_range_end;
     g_range_prompt.apply_text = g_str->light_mode_range_apply;
     g_range_prompt.cancel_text = speed_prompt_cancel_text();
-    g_range_prompt.invalid_start_text = g_str->light_mode_range_invalid_start;
+    g_range_prompt.invalid_start_text = en
+        ? (L"Enter a finite number not less than " + format_edit_number(range_start) + L".")
+        : (L"Введите конечное число не меньше " + format_edit_number(range_start) + L".");
     g_range_prompt.invalid_end_text = g_str->light_mode_range_invalid_end;
     g_range_prompt.wnd = CreateWindowExW(
         WS_EX_DLGMODALFRAME | WS_EX_TOOLWINDOW,
         L"LvmRangePrompt",
         g_range_prompt.title.c_str(),
         WS_CAPTION | WS_SYSMENU | WS_POPUP | WS_VISIBLE,
-        CW_USEDEFAULT, CW_USEDEFAULT, 430, 246,
+        CW_USEDEFAULT, CW_USEDEFAULT, 470, 256,
         g.main, nullptr,
         reinterpret_cast<HINSTANCE>(GetWindowLongPtr(g.main, GWLP_HINSTANCE)),
         nullptr);
@@ -3673,6 +3803,7 @@ void hide_loading() {
     g_loading_cancellable = false;
     if (g_loading_wnd) { DestroyWindow(g_loading_wnd); g_loading_wnd = nullptr; }
     if (g.main && IsWindow(g.main)) EnableWindow(g.main, TRUE);
+    raise_main_window();
 }
 
 double precompute_global_gap_step(const std::vector<double>& time) {
@@ -3733,8 +3864,14 @@ void apply_loaded_dataset(lvm::Dataset ds, const std::wstring& wpath, bool hide_
     g.current_file_partial = requested_time_window || ds.partial;
     g.ds = std::move(ds);
     g.visible.assign(g.ds.channel_count(), hide_channels ? 0 : 1);
-    g.channel_labels.clear();
-    for (const auto& n : g.ds.names) g.channel_labels.push_back(to_w(n));
+    g.channel_labels.assign(g.ds.channel_count(), L"");
+    for (std::size_t i = 0; i < g.ds.channel_count(); ++i) {
+        if (i < g.ds.names.size() && !g.ds.names[i].empty()) {
+            g.channel_labels[i] = to_w(g.ds.names[i]);
+        } else {
+            g.channel_labels[i] = std::wstring(L"Channel_") + std::to_wstring(i + 1);
+        }
+    }
     g_channel_colors.clear();
     g_channel_colors.reserve(g.ds.channel_count());
     for (std::size_t i = 0; i < g.ds.channel_count(); ++i) g_channel_colors.push_back(kPalette[i % (sizeof(kPalette) / sizeof(kPalette[0]))]);
@@ -3744,9 +3881,9 @@ void apply_loaded_dataset(lvm::Dataset ds, const std::wstring& wpath, bool hide_
     g.channel_formula_rpn.assign(g.ds.channel_count(), {});
     g.global_formula = default_channel_formula_text();
     g.global_formula_rpn.clear();
-    g.formula_runtime_dirty = true;
     g.formula_ini_deferred = g.light_mode;
     if (!g.formula_ini_deferred) load_channel_formulas_from_ini();
+    invalidate_formula_runtime();
     g.data_t0 = g.ds.time.front();
     g.data_t1 = g.ds.time.back();
     if (g.data_t1 <= g.data_t0) g.data_t1 = g.data_t0 + 1.0;
@@ -3773,6 +3910,10 @@ void apply_loaded_dataset(lvm::Dataset ds, const std::wstring& wpath, bool hide_
     g.playhead_active = false;
     g.auto_y = true;   // a fresh file starts on auto-fit
     if (hide_channels) g.auto_y_amp = true;
+    if (g.freq_mode) {
+        // New files should open in the time plot by default.
+        set_mode(false);
+    }
     if (g.autoy) { SendMessageW(g.autoy, BM_SETCHECK, BST_CHECKED, 0); InvalidateRect(g.autoy, nullptr, FALSE); }
     if (g.menu) CheckMenuItem(g.menu, IDC_AUTOY, MF_BYCOMMAND | MF_CHECKED);
     clear_spectrum_cache_state();
@@ -3796,7 +3937,10 @@ void apply_loaded_dataset(lvm::Dataset ds, const std::wstring& wpath, bool hide_
     refresh_settings_controls();
     layout();
     set_status();
-    InvalidateRect(g.main, nullptr, TRUE);
+    release_backbuffer();
+    invalidate_plot();
+    RedrawWindow(g.main, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    raise_main_window();
     g.last_error.clear();
 }
 
@@ -4158,6 +4302,25 @@ void draw_axes(HDC dc, const RECT& p, double x0, double x1, double y0, double y1
     HGDIOBJ old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
     Rectangle(dc, p.left, p.top, p.right, p.bottom);
     SelectObject(dc, old_brush);
+    const std::wstring corner_x = normalize_axis_label_text(g.axis_x_label, L"X");
+    const std::wstring corner_y = normalize_axis_label_text(g.axis_y_label, L"Y");
+    auto draw_corner_label = [&](const std::wstring& text, int x, int y, UINT align) {
+        if (text.empty()) return;
+        SIZE ts{};
+        GetTextExtentPoint32W(dc, text.c_str(), static_cast<int>(text.size()), &ts);
+        RECT br = {x - 3, y - 2, x + ts.cx + 3, y + ts.cy + 2};
+        HBRUSH bg = CreateSolidBrush(g_theme->bg_plot);
+        FillRect(dc, &br, bg);
+        DeleteObject(bg);
+        SetTextAlign(dc, align);
+        TextOutW(dc, x, y, text.c_str(), static_cast<int>(text.size()));
+    };
+    draw_corner_label(corner_y, p.left + 4, p.top + 4, TA_LEFT | TA_TOP);
+    {
+        SIZE ts{};
+        GetTextExtentPoint32W(dc, corner_x.c_str(), static_cast<int>(corner_x.size()), &ts);
+        draw_corner_label(corner_x, p.right - 4 - ts.cx, p.bottom - 4 - ts.cy, TA_LEFT | TA_TOP);
+    }
     draw_text(dc, (p.left + p.right) / 2, p.bottom + 20, xlabel, TA_CENTER | TA_TOP);
 
     SelectObject(dc, old_font);
@@ -4178,7 +4341,7 @@ void draw_legend(HDC dc, const RECT& p) {
     SetBkMode(dc, TRANSPARENT);
 
     for (int i = 0; i < ch_count; ++i) {
-        std::wstring nm = g.channel_labels[i];
+        std::wstring nm = channel_display_label(static_cast<std::size_t>(i));
         SIZE sz;
         GetTextExtentPoint32W(dc, nm.c_str(), static_cast<int>(nm.size()), &sz);
         if (sz.cx > max_width) max_width = sz.cx;
@@ -4217,7 +4380,7 @@ void draw_legend(HDC dc, const RECT& p) {
 
         SetTextColor(dc, vis ? g_theme->text_primary : g_theme->text_secondary);
         SetTextAlign(dc, TA_LEFT | TA_TOP);
-        std::wstring nm = g.channel_labels[i];
+        std::wstring nm = channel_display_label(static_cast<std::size_t>(i));
         const int text_x = box_x + pad + 18;
         TextOutW(dc, text_x, y, nm.c_str(), static_cast<int>(nm.size()));
         if (!vis) {
@@ -4398,6 +4561,8 @@ void draw_measure(HDC dc) {
     HGDIOBJ prev_brush = SelectObject(dc, wb);
     for (const auto& group : g.point_groups) {
         if (!group.visible || group.points.empty()) continue;
+        const std::wstring x_axis_label = L"X";
+        const std::wstring y_axis_label = L"Y";
 
         HPEN seg = CreatePen(PS_DASH, 1, group.color);
         HGDIOBJ old_seg = SelectObject(dc, seg);
@@ -4424,9 +4589,21 @@ void draw_measure(HDC dc) {
             DeleteObject(dot_brush);
 
             std::wstring lab;
-            if (g.pdisp.number) { swprintf(b, 96, L"#%zu ", i + 1); lab += b; }
-            if (g.pdisp.x) { swprintf(b, 96, g_str->fmt_pt_x, group.points[i].first); lab += b; lab += xunit; lab += L" "; }
-            if (g.pdisp.y) { swprintf(b, 96, g_str->fmt_y, group.points[i].second); lab += b; }
+            if (group.display.number) { swprintf(b, 96, L"#%zu ", i + 1); lab += b; }
+            if (group.display.x) {
+                swprintf(b, 96, L"%ls=", x_axis_label.c_str());
+                lab += b;
+                swprintf(b, 96, L"%.5g", group.points[i].first);
+                lab += b;
+                lab += xunit;
+                lab += L" ";
+            }
+            if (group.display.y) {
+                swprintf(b, 96, L"%ls=", y_axis_label.c_str());
+                lab += b;
+                swprintf(b, 96, L"%.5g", group.points[i].second);
+                lab += b;
+            }
             if (!lab.empty()) {
                 SetTextColor(dc, group.color);
                 SetTextAlign(dc, TA_LEFT | TA_BOTTOM);
@@ -4440,13 +4617,13 @@ void draw_measure(HDC dc) {
                 const double dx = group.points[i].first - group.points[i - 1].first;
                 const double dy = group.points[i].second - group.points[i - 1].second;
                 std::wstring dl;
-                if (g.pdisp.dx) { swprintf(b, 96, g_str->fmt_pt_dx, dx); dl += b; dl += xunit; dl += L" "; }
-                if (g.pdisp.dy) { swprintf(b, 96, g_str->fmt_pt_dy, dy); dl += b; }
-                if (g.pdisp.inv_dt && !g.freq_mode) {
+                if (group.display.dx) { swprintf(b, 96, g_str->fmt_pt_dx, dx); dl += b; dl += xunit; dl += L" "; }
+                if (group.display.dy) { swprintf(b, 96, g_str->fmt_pt_dy, dy); dl += b; }
+                if (group.display.inv_dt && !g.freq_mode) {
                     const double inv = (dx != 0.0) ? 1.0 / dx : 0.0;
                     swprintf(b, 96, g_str->fmt_pt_invdt, inv); dl += b;
                 }
-                if (g.pdisp.dist) {
+                if (group.display.dist) {
                     swprintf(b, 96, g_str->fmt_pt_dist, std::sqrt(dx * dx + dy * dy)); dl += b;
                 }
                 if (!dl.empty()) {
@@ -4618,6 +4795,8 @@ void draw_time(HDC dc, const RECT& p) {
 
     static std::vector<float> cmin, cmax;
     const bool visible_channels = any_visible_channel();
+    // Keep the sparse path for genuinely small windows only; it is more expensive
+    // per sample than the min/max projection used for denser views.
     const bool sparse = (hi - lo) <= static_cast<std::size_t>(pw) * 2;
     const bool allow_smoothing = should_render_smoothed_polyline(hi - lo, pw);
     const std::size_t light_mode_gap_budget = std::max<std::size_t>(static_cast<std::size_t>(pw) * 48, 120000);
@@ -5408,10 +5587,14 @@ bool save_png(const std::wstring& path) {
     return ok;
 }
 
+std::wstring channel_display_label(std::size_t ci) {
+    if (ci < g.channel_labels.size() && !g.channel_labels[ci].empty()) return g.channel_labels[ci];
+    if (ci < g.ds.names.size() && !g.ds.names[ci].empty()) return to_w(g.ds.names[ci]);
+    return std::wstring(L"Channel_") + std::to_wstring(ci + 1);
+}
+
 std::string current_channel_label(std::size_t ci) {
-    if (ci < g.channel_labels.size()) return to_acp(g.channel_labels[ci].c_str());
-    if (ci < g.ds.names.size()) return g.ds.names[ci];
-    return "Channel_" + std::to_string(ci + 1);
+    return to_acp(channel_display_label(ci).c_str());
 }
 
 void invalidate_formula_runtime() {
@@ -5549,10 +5732,10 @@ double transform_channel_value(std::size_t ci, double raw) {
         : (g.global_formula_affine
             ? (raw * g.global_formula_mul + g.global_formula_add)
             : eval_formula_rpn(g.global_formula_rpn, raw));
-    const double base = (std::isfinite(global_value) || std::isnan(global_value)) ? global_value : raw;
+    const double base = std::isfinite(global_value) ? global_value : raw;
     if (ci < g.channel_formula_identity.size() && g.channel_formula_identity[ci]) return base;
     const double value = eval_formula_rpn(g.channel_formula_rpn[ci], base);
-    return std::isfinite(value) || std::isnan(value) ? value : raw;
+    return std::isfinite(value) ? value : raw;
 }
 
 std::wstring format_edit_number(double value) {
@@ -5991,6 +6174,27 @@ double read_ini_double(const wchar_t* section, const wchar_t* key, double def_va
     return def_value;
 }
 
+std::wstring trim_wide_ascii(const std::wstring& text) {
+    const wchar_t* ws = L" \t\r\n\f\v";
+    const std::size_t begin = text.find_first_not_of(ws);
+    if (begin == std::wstring::npos) return L"";
+    const std::size_t end = text.find_last_not_of(ws);
+    return text.substr(begin, end - begin + 1);
+}
+
+std::wstring read_ini_wstring(const wchar_t* section, const wchar_t* key, const std::wstring& def_value) {
+    if (g_config_path.empty()) g_config_path = app_config_path();
+    wchar_t buf[128]{};
+    GetPrivateProfileStringW(section, key, def_value.c_str(), buf, 128, g_config_path.c_str());
+    return trim_wide_ascii(buf);
+}
+
+std::wstring normalize_axis_label_text(const std::wstring& text, const wchar_t* fallback) {
+    std::wstring out = trim_wide_ascii(text);
+    if (out.empty()) out = fallback ? fallback : L"";
+    return out;
+}
+
 void write_ini_double(const wchar_t* section, const wchar_t* key, double value) {
     if (g_config_path.empty()) g_config_path = app_config_path();
     std::wstring text = format_edit_number(value);
@@ -6060,6 +6264,10 @@ void load_runtime_settings() {
     g.pdisp.dy = read_ini_int(L"points", L"dy", g.pdisp.dy ? 1 : 0) != 0;
     g.pdisp.inv_dt = read_ini_int(L"points", L"inv_dt", g.pdisp.inv_dt ? 1 : 0) != 0;
     g.pdisp.dist = read_ini_int(L"points", L"dist", g.pdisp.dist ? 1 : 0) != 0;
+    g.axis_x_label = normalize_axis_label_text(
+        read_ini_wstring(L"ui", L"axis_x_label", read_ini_wstring(L"points", L"x_label", g.axis_x_label)), L"X");
+    g.axis_y_label = normalize_axis_label_text(
+        read_ini_wstring(L"ui", L"axis_y_label", read_ini_wstring(L"points", L"y_label", g.axis_y_label)), L"Y");
 
     g.marker_color = static_cast<COLORREF>(read_ini_int(
         L"ui", L"marker_color", static_cast<int>(g_theme->marker_color)));
@@ -6095,6 +6303,8 @@ void save_runtime_settings() {
     write_ini_double(L"ui", L"play_speed", g.play_speed);
     write_ini_double(L"ui", L"light_mode_open_start", g.light_mode_open_start);
     write_ini_double(L"ui", L"light_mode_open_end", g.light_mode_open_end);
+    WritePrivateProfileStringW(L"ui", L"axis_x_label", g.axis_x_label.c_str(), g_config_path.c_str());
+    WritePrivateProfileStringW(L"ui", L"axis_y_label", g.axis_y_label.c_str(), g_config_path.c_str());
 
     WritePrivateProfileStringW(L"points", L"number", g.pdisp.number ? L"1" : L"0", g_config_path.c_str());
     WritePrivateProfileStringW(L"points", L"x", g.pdisp.x ? L"1" : L"0", g_config_path.c_str());
@@ -6372,7 +6582,7 @@ void layout_welcome_controls(HWND hwnd) {
 }
 
 void append_hotkey_line(std::wstring& out, int command) {
-    out += L"  " + hotkey_display_text_for_command(command) + L"\t— " + command_name(command) + L"\n";
+    out += L"  " + hotkey_display_text_for_command(command) + L"\t: " + command_name(command) + L"\n";
 }
 
 std::wstring hotkeys_body_text() {
@@ -6393,7 +6603,7 @@ std::wstring hotkeys_body_text() {
     append_hotkey_line(out, IDM_ADD_MARKER);
     append_hotkey_line(out, IDM_ADD_VLINE);
     append_hotkey_line(out, IDM_ADD_HLINE);
-    out += en ? L"  Esc\t— Cancel current add mode\n\n" : L"  Esc\t— Отменить текущий режим добавления\n\n";
+    out += en ? L"  Esc\t: Cancel current add mode\n\n" : L"  Esc\t: Отменить текущий режим добавления\n\n";
 
     out += en ? L"View\n" : L"Вид\n";
     append_hotkey_line(out, IDC_AUTOY);
@@ -6412,13 +6622,13 @@ std::wstring hotkeys_body_text() {
     out += L"\n";
 
     out += en ? L"Mouse\n" : L"Мышь\n";
-    out += en ? L"  Wheel\t— Zoom under cursor\n" : L"  Колесо\t— Масштаб под курсором\n";
-    out += en ? L"  Shift+Wheel\t— Pan left / right\n" : L"  Shift+колесо\t— Прокрутка влево / вправо\n";
-    out += en ? L"  Ctrl+Wheel\t— Zoom Y\n" : L"  Ctrl+колесо\t— Масштаб по Y\n";
-    out += en ? L"  Alt+Wheel\t— Pan up / down (Y)\n" : L"  Alt+колесо\t— Сдвиг вверх / вниз по Y\n";
-    out += en ? L"  Left-drag\t— Pan view\n" : L"  ЛКМ + тяга\t— Панорамирование\n";
-    out += en ? L"  Left-click\t— Place point / line / marker in active mode\n" : L"  ЛКМ\t— Поставить точку / линию / маркер в активном режиме\n";
-    out += en ? L"  Right-click\t— Clear points\n\n" : L"  ПКМ\t— Очистить точки\n\n";
+    out += en ? L"  Wheel\t: Zoom under cursor\n" : L"  Колесо\t: Масштаб под курсором\n";
+    out += en ? L"  Shift+Wheel\t: Pan left / right\n" : L"  Shift+колесо\t: Прокрутка влево / вправо\n";
+    out += en ? L"  Ctrl+Wheel\t: Zoom Y\n" : L"  Ctrl+колесо\t: Масштаб по Y\n";
+    out += en ? L"  Alt+Wheel\t: Pan up / down (Y)\n" : L"  Alt+колесо\t: Сдвиг вверх / вниз по Y\n";
+    out += en ? L"  Left-drag\t: Pan view\n" : L"  ЛКМ + тяга\t: Панорамирование\n";
+    out += en ? L"  Left-click\t: Place point / line / marker in active mode\n" : L"  ЛКМ\t: Поставить точку / линию / маркер в активном режиме\n";
+    out += en ? L"  Right-click\t: Clear points\n\n" : L"  ПКМ\t: Очистить точки\n\n";
     append_hotkey_line(out, IDM_HOTKEYS);
     return out;
 }
@@ -6521,6 +6731,7 @@ LRESULT CALLBACK HotkeysDialogProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (g_hotkeys_dialog.list) SendMessageW(g_hotkeys_dialog.list, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
             if (close) SendMessageW(close, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
             populate_hotkeys_dialog_list(g_hotkeys_dialog.list);
+            enable_file_drop_support(hwnd);
             return 0;
         }
         case WM_COMMAND:
@@ -6532,13 +6743,22 @@ LRESULT CALLBACK HotkeysDialogProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_CLOSE:
             DestroyWindow(hwnd);
             return 0;
+        case WM_DROPFILES:
+            if (g.main && IsWindow(g.main)) {
+                SendMessageW(g.main, WM_DROPFILES, wp, lp);
+                return 0;
+            }
+            return 0;
         case WM_ERASEBKGND: {
             HDC dc = reinterpret_cast<HDC>(wp);
-            RECT rc{};
-            GetClientRect(hwnd, &rc);
-            HBRUSH b = CreateSolidBrush(g_theme->bg_panel);
-            FillRect(dc, &rc, b);
-            DeleteObject(b);
+            draw_prompt_surface(hwnd, dc);
+            return 1;
+        }
+        case WM_PAINT: {
+            PAINTSTRUCT ps{};
+            HDC dc = BeginPaint(hwnd, &ps);
+            draw_prompt_surface(hwnd, dc);
+            EndPaint(hwnd, &ps);
             return 1;
         }
         case WM_CTLCOLORSTATIC:
@@ -7406,9 +7626,9 @@ HMENU make_menu() {
         std::wstring measure_text = menu_text(en ? L"Points" : L"Точки", IDC_MEASURE);
         std::wstring marker_text = menu_text(en ? L"Marker" : L"Маркер", IDM_ADD_MARKER);
         std::wstring vline_text = menu_text(en ? L"Vertical line" : L"Вертикальная линия", IDM_ADD_VLINE);
-        std::wstring vline_exact_text = menu_text(en ? L"Vertical line (exact)..." : L"Вертикальная линия (точно)...", IDM_ADD_VLINE_EXACT);
+        std::wstring vline_exact_text = menu_text(en ? L"Vertical line (exact)" : L"Вертикальная линия (точно)", IDM_ADD_VLINE_EXACT);
         std::wstring hline_text = menu_text(en ? L"Horizontal line" : L"Горизонтальная линия", IDM_ADD_HLINE);
-        std::wstring hline_exact_text = menu_text(en ? L"Horizontal line (exact)..." : L"Горизонтальная линия (точно)...", IDM_ADD_HLINE_EXACT);
+        std::wstring hline_exact_text = menu_text(en ? L"Horizontal line (exact)" : L"Горизонтальная линия (точно)", IDM_ADD_HLINE_EXACT);
         append_menu_item_owner_draw(tools, IDC_MEASURE, measure_text);
         append_menu_item_owner_draw(tools, IDM_ADD_MARKER, marker_text);
         append_menu_item_owner_draw(tools, IDM_ADD_VLINE, vline_text);
@@ -7422,13 +7642,13 @@ HMENU make_menu() {
         append_menu_popup_owner_draw(bar, tools, en ? L"Tools" : L"Инструменты");
 
         HMENU settings = CreatePopupMenu();
-        append_menu_item_owner_draw(settings, IDC_PTSETTINGS, en ? L"General settings…" : L"Общие настройки…");
+        append_menu_item_owner_draw(settings, IDC_PTSETTINGS, en ? L"General settings" : L"Общие настройки");
         append_menu_popup_owner_draw(bar, settings, en ? L"Settings" : L"Настройки");
 
         HMENU help = CreatePopupMenu();
-        std::wstring hotkeys_text = menu_text(en ? L"Keyboard shortcuts…" : L"Горячие клавиши…", IDM_HOTKEYS);
+        std::wstring hotkeys_text = menu_text(en ? L"Keyboard shortcuts" : L"Горячие клавиши", IDM_HOTKEYS);
         append_menu_item_owner_draw(help, IDM_HOTKEYS, hotkeys_text);
-        append_menu_item_owner_draw(help, IDM_ABOUT, en ? L"About…" : L"О программе…");
+        append_menu_item_owner_draw(help, IDM_ABOUT, en ? L"About" : L"О программе");
         append_menu_popup_owner_draw(bar, help, en ? L"Help" : L"Справка");
         return bar;
     }
@@ -7492,16 +7712,16 @@ HMENU make_menu() {
         HMENU meas = CreatePopupMenu();
         std::wstring measure_text = menu_text(en ? L"Points" : L"Точки", IDC_MEASURE);
         append_menu_item_owner_draw(meas, IDC_MEASURE, measure_text);
-        append_menu_item_owner_draw(meas, IDC_PTSETTINGS, en ? L"Settings…" : L"Настройки…");
+        append_menu_item_owner_draw(meas, IDC_PTSETTINGS, en ? L"Settings" : L"Настройки");
         AppendMenuW(meas, MF_SEPARATOR, 0, nullptr);
         append_menu_item_owner_draw(meas, IDM_CLEAR_POINTS, en ? L"Clear\tDelete" : L"Очистить\tDelete");
         append_menu_popup_owner_draw(bar, meas, menu_points);
 
         HMENU lines = CreatePopupMenu();
         std::wstring vline_text = menu_text(en ? L"Vertical (click)" : L"Вертикальная (клик)", IDM_ADD_VLINE);
-        std::wstring vline_exact_text = menu_text(en ? L"Vertical (exact)..." : L"Вертикальная (точно)...", IDM_ADD_VLINE_EXACT);
+        std::wstring vline_exact_text = menu_text(en ? L"Vertical (exact)" : L"Вертикальная (точно)", IDM_ADD_VLINE_EXACT);
         std::wstring hline_text = menu_text(en ? L"Horizontal (click)" : L"Горизонтальная (клик)", IDM_ADD_HLINE);
-        std::wstring hline_exact_text = menu_text(en ? L"Horizontal (exact)..." : L"Горизонтальная (точно)...", IDM_ADD_HLINE_EXACT);
+        std::wstring hline_exact_text = menu_text(en ? L"Horizontal (exact)" : L"Горизонтальная (точно)", IDM_ADD_HLINE_EXACT);
         append_menu_item_owner_draw(lines, IDM_ADD_VLINE, vline_text);
         append_menu_item_owner_draw(lines, IDM_ADD_VLINE_EXACT, vline_exact_text);
         append_menu_item_owner_draw(lines, IDM_ADD_HLINE, hline_text);
@@ -7518,9 +7738,9 @@ HMENU make_menu() {
         append_menu_popup_owner_draw(bar, markers, menu_markers);
 
         HMENU help = CreatePopupMenu();
-        std::wstring hotkeys_text = menu_text(en ? L"Keyboard shortcuts…" : L"Горячие клавиши…", IDM_HOTKEYS);
+        std::wstring hotkeys_text = menu_text(en ? L"Keyboard shortcuts" : L"Горячие клавиши", IDM_HOTKEYS);
         append_menu_item_owner_draw(help, IDM_HOTKEYS, hotkeys_text);
-        append_menu_item_owner_draw(help, IDM_ABOUT, en ? L"About…" : L"О программе…");
+        append_menu_item_owner_draw(help, IDM_ABOUT, en ? L"About" : L"О программе");
         append_menu_popup_owner_draw(bar, help, menu_help);
         return bar;
     }
@@ -7556,7 +7776,7 @@ HMENU make_menu() {
 
     HMENU meas = CreatePopupMenu();
     append_menu_item_owner_draw(meas, IDC_MEASURE, L"Точки\tV");
-    append_menu_item_owner_draw(meas, IDC_PTSETTINGS, L"Настройки…");
+    append_menu_item_owner_draw(meas, IDC_PTSETTINGS, L"Настройки");
     AppendMenuW(meas, MF_SEPARATOR, 0, nullptr);
     append_menu_item_owner_draw(meas, IDM_CLEAR_POINTS, L"Очистить\tDelete");
     append_menu_popup_owner_draw(bar, meas, L"Точки");
@@ -7577,8 +7797,8 @@ HMENU make_menu() {
     append_menu_popup_owner_draw(bar, markers, L"Маркеры");
 
     HMENU help = CreatePopupMenu();
-    append_menu_item_owner_draw(help, IDM_HOTKEYS, L"Горячие клавиши…\tF1");
-    append_menu_item_owner_draw(help, IDM_ABOUT, L"О программе…");
+    append_menu_item_owner_draw(help, IDM_HOTKEYS, L"Горячие клавиши\tF1");
+    append_menu_item_owner_draw(help, IDM_ABOUT, L"О программе");
     append_menu_popup_owner_draw(bar, help, L"Справка");
 
     return bar;
@@ -7780,6 +8000,18 @@ void refresh_settings_controls() {
     set_toggle_checked(GetDlgItem(g.settings_wnd, IDC_SET_LIGHT_MODE), g.light_mode);
     set_toggle_checked(GetDlgItem(g.settings_wnd, IDC_SET_GAP_MARKERS), g.show_gap_markers);
     if (HWND gap = GetDlgItem(g.settings_wnd, IDC_SET_GAP_MARKERS)) SetWindowTextW(gap, gap_markers_toggle_text());
+    if (HWND xlbl = GetDlgItem(g.settings_wnd, IDC_SET_AXIS_X_LABEL_STATIC)) SetWindowTextW(xlbl, axis_x_label_text());
+    if (HWND ylbl = GetDlgItem(g.settings_wnd, IDC_SET_AXIS_Y_LABEL_STATIC)) SetWindowTextW(ylbl, axis_y_label_text());
+    if (HWND xedit = GetDlgItem(g.settings_wnd, IDC_SET_AXIS_X_LABEL_EDIT)) {
+        g.updating_axis_label_edits = true;
+        SetWindowTextW(xedit, g.axis_x_label.c_str());
+        g.updating_axis_label_edits = false;
+    }
+    if (HWND yedit = GetDlgItem(g.settings_wnd, IDC_SET_AXIS_Y_LABEL_EDIT)) {
+        g.updating_axis_label_edits = true;
+        SetWindowTextW(yedit, g.axis_y_label.c_str());
+        g.updating_axis_label_edits = false;
+    }
     populate_hotkey_list(g.settings_wnd);
     load_selected_hotkey_controls(g.settings_wnd);
 }
@@ -7820,28 +8052,33 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 return mk(L"BUTTON", text, BS_OWNERDRAW | WS_TABSTOP, x, y, w, h, id);
             };
             const bool en = (g_str == &kEn);
-            mk(L"BUTTON", en ? L"General" : L"Общие", BS_OWNERDRAW, 12, 10, 510, 138, IDC_SET_GROUP_GENERAL);
+            mk(L"BUTTON", en ? L"General" : L"Общие", BS_OWNERDRAW, 12, 10, 510, 176, IDC_SET_GROUP_GENERAL);
             mk(L"BUTTON", g_str->lang_ru, BS_OWNERDRAW, 28, 36, 110, 22, IDC_SET_LANG_RU);
             mk(L"BUTTON", g_str->lang_en, BS_OWNERDRAW, 144, 36, 110, 22, IDC_SET_LANG_EN);
             mkcheck(g_str->light_mode, 28, 70, 278, 28, IDC_SET_LIGHT_MODE);
             mkcheck(gap_markers_toggle_text(), 28, 102, 278, 28, IDC_SET_GAP_MARKERS);
+            mk(L"STATIC", axis_x_label_text(), SS_LEFT, 28, 136, 72, 20, IDC_SET_AXIS_X_LABEL_STATIC);
+            mk(L"EDIT", g.axis_x_label.c_str(), WS_BORDER | ES_AUTOHSCROLL | WS_TABSTOP, 104, 132, 260, 24, IDC_SET_AXIS_X_LABEL_EDIT);
+            mk(L"STATIC", axis_y_label_text(), SS_LEFT, 28, 164, 72, 20, IDC_SET_AXIS_Y_LABEL_STATIC);
+            mk(L"EDIT", g.axis_y_label.c_str(), WS_BORDER | ES_AUTOHSCROLL | WS_TABSTOP, 104, 160, 260, 24, IDC_SET_AXIS_Y_LABEL_EDIT);
 
-            mk(L"BUTTON", en ? L"Hotkeys" : L"Горячие клавиши", BS_OWNERDRAW, 12, 158, 510, 188, IDC_SET_GROUP_HOTKEYS);
-            mk(L"LISTBOX", L"", LBS_NOTIFY | WS_VSCROLL | WS_BORDER, 24, 182, 240, 146, IDC_SET_HOTKEY_LIST);
-            mk(L"BUTTON", L"Ctrl", BS_OWNERDRAW, 284, 190, 70, 22, IDC_SET_HOTKEY_CTRL);
-            mk(L"BUTTON", L"Shift", BS_OWNERDRAW, 356, 190, 70, 22, IDC_SET_HOTKEY_SHIFT);
-            mk(L"BUTTON", L"Alt", BS_OWNERDRAW, 428, 190, 70, 22, IDC_SET_HOTKEY_ALT);
-            mk(L"STATIC", en ? L"Key:" : L"Клавиша:", SS_LEFT, 284, 222, 80, 20, 0);
-            HWND combo = mk(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_BORDER, 284, 242, 214, 260, IDC_SET_HOTKEY_KEY);
+            mk(L"BUTTON", en ? L"Hotkeys" : L"Горячие клавиши", BS_OWNERDRAW, 12, 198, 510, 188, IDC_SET_GROUP_HOTKEYS);
+            mk(L"LISTBOX", L"", LBS_NOTIFY | WS_VSCROLL | WS_BORDER, 24, 222, 240, 146, IDC_SET_HOTKEY_LIST);
+            mk(L"BUTTON", L"Ctrl", BS_OWNERDRAW, 284, 230, 70, 22, IDC_SET_HOTKEY_CTRL);
+            mk(L"BUTTON", L"Shift", BS_OWNERDRAW, 356, 230, 70, 22, IDC_SET_HOTKEY_SHIFT);
+            mk(L"BUTTON", L"Alt", BS_OWNERDRAW, 428, 230, 70, 22, IDC_SET_HOTKEY_ALT);
+            mk(L"STATIC", en ? L"Key:" : L"Клавиша:", SS_LEFT, 284, 262, 80, 20, 0);
+            HWND combo = mk(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL | WS_BORDER, 284, 282, 214, 260, IDC_SET_HOTKEY_KEY);
             populate_hotkey_key_combo(combo);
-            mk(L"BUTTON", en ? L"Apply" : L"Применить", BS_OWNERDRAW, 284, 280, 100, 28, IDC_SET_HOTKEY_APPLY);
-            mk(L"BUTTON", en ? L"Reset" : L"Сбросить", BS_OWNERDRAW, 398, 280, 100, 28, IDC_SET_HOTKEY_RESET);
-            mk(L"BUTTON", en ? L"Clear" : L"Очистить", BS_OWNERDRAW, 284, 314, 100, 28, IDC_SET_HOTKEY_CLEAR);
+            mk(L"BUTTON", en ? L"Apply" : L"Применить", BS_OWNERDRAW, 284, 320, 100, 28, IDC_SET_HOTKEY_APPLY);
+            mk(L"BUTTON", en ? L"Reset" : L"Сбросить", BS_OWNERDRAW, 398, 320, 100, 28, IDC_SET_HOTKEY_RESET);
+            mk(L"BUTTON", en ? L"Clear" : L"Очистить", BS_OWNERDRAW, 284, 354, 100, 28, IDC_SET_HOTKEY_CLEAR);
             populate_hotkey_list(hwnd);
             load_selected_hotkey_controls(hwnd);
             CheckRadioButton(hwnd, IDC_SET_LANG_RU, IDC_SET_LANG_EN, g_str == &kEn ? IDC_SET_LANG_EN : IDC_SET_LANG_RU);
             set_toggle_checked(GetDlgItem(hwnd, IDC_SET_LIGHT_MODE), g.light_mode);
             set_toggle_checked(GetDlgItem(hwnd, IDC_SET_GAP_MARKERS), g.show_gap_markers);
+            enable_file_drop_support(hwnd);
             return 0;
         }
         case WM_COMMAND: {
@@ -7875,6 +8112,22 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         refresh_settings_controls();
                     }
                     return 0;
+                case IDC_SET_AXIS_X_LABEL_EDIT:
+                case IDC_SET_AXIS_Y_LABEL_EDIT: {
+                    if (HIWORD(wp) != EN_KILLFOCUS || g.updating_axis_label_edits) return 0;
+                    wchar_t buf[128]{};
+                    GetWindowTextW(ctl, buf, 128);
+                    const bool is_x = (id == IDC_SET_AXIS_X_LABEL_EDIT);
+                    std::wstring label = normalize_axis_label_text(buf, is_x ? L"X" : L"Y");
+                    if (is_x) g.axis_x_label = label;
+                    else g.axis_y_label = label;
+                    g.updating_axis_label_edits = true;
+                    SetWindowTextW(ctl, label.c_str());
+                    g.updating_axis_label_edits = false;
+                    save_runtime_settings();
+                    InvalidateRect(g.main, nullptr, FALSE);
+                    return 0;
+                }
                 case IDC_SET_HOTKEY_CTRL:
                 case IDC_SET_HOTKEY_SHIFT:
                 case IDC_SET_HOTKEY_ALT:
@@ -7924,6 +8177,12 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             InvalidateRect(g.main, nullptr, FALSE);
             return 0;
         }
+        case WM_DROPFILES:
+            if (g.main && IsWindow(g.main)) {
+                SendMessageW(g.main, WM_DROPFILES, wp, lp);
+                return 0;
+            }
+            return 0;
         case WM_ERASEBKGND: {
             HDC dc = reinterpret_cast<HDC>(wp);
             RECT rc;
@@ -8010,7 +8269,7 @@ void open_settings() {
         HINSTANCE inst = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(g.main, GWLP_HINSTANCE));
             g.settings_wnd = CreateWindowExW(
             WS_EX_TOOLWINDOW, L"LvmPtSettings", settings_window_title(),
-            WS_POPUP | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT, CW_USEDEFAULT, 540, 392,
+            WS_POPUP | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT, CW_USEDEFAULT, 540, 436,
             g.main, nullptr, inst, nullptr);
         if (!g.settings_wnd) return;
         RECT mr, sr;
@@ -8078,6 +8337,7 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             mkbtn(g_str->welcome_btn_hotkeys, IDM_HOTKEYS);
             mkbtn(g_str->welcome_btn_start, IDW_START);
             layout_welcome_controls(hwnd);
+            enable_file_drop_support(hwnd);
             return 0;
         }
         case WM_SIZE:
@@ -8159,6 +8419,12 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 case IDW_THEME_DARK: apply_theme_choice(&kDarkTheme); return 0;
                 case IDM_LANG_RU: if (g_str != &kRu) { g_str = &kRu; save_runtime_settings(); rebuild_ui(); } return 0;
                 case IDM_LANG_EN: if (g_str != &kEn) { g_str = &kEn; save_runtime_settings(); rebuild_ui(); } return 0;
+            }
+            return 0;
+        case WM_DROPFILES:
+            if (g.main && IsWindow(g.main)) {
+                SendMessageW(g.main, WM_DROPFILES, wp, lp);
+                return 0;
             }
             return 0;
         case WM_DRAWITEM: {
@@ -8250,6 +8516,44 @@ void show_welcome(HINSTANCE inst) {
     hide_ui_controls();
     SetWindowPos(g.welcome_wnd, HWND_TOP, 0, 0, rc.right, rc.bottom, SWP_SHOWWINDOW);
     RedrawWindow(g.welcome_wnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN);
+}
+
+void raise_main_window() {
+    if (!g.main || !IsWindow(g.main)) return;
+    ShowWindow(g.main, SW_SHOW);
+    SetWindowPos(g.main, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    SetForegroundWindow(g.main);
+    SetActiveWindow(g.main);
+}
+
+constexpr UINT_PTR kDropForwardSubclassId = 0x4C564D01u;
+
+LRESULT CALLBACK drop_forward_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
+                                            UINT_PTR, DWORD_PTR) {
+    if (msg == WM_DROPFILES) {
+        HWND parent = GetParent(hwnd);
+        if (parent) SendMessageW(parent, WM_DROPFILES, wp, lp);
+        return 0;
+    }
+    if (msg == WM_NCDESTROY) {
+        RemoveWindowSubclass(hwnd, drop_forward_subclass_proc, kDropForwardSubclassId);
+    }
+    return DefSubclassProc(hwnd, msg, wp, lp);
+}
+
+BOOL CALLBACK enable_file_drop_child_proc(HWND child, LPARAM) {
+    if (!child || !IsWindow(child)) return TRUE;
+    DragAcceptFiles(child, TRUE);
+    if (GetParent(child)) {
+        SetWindowSubclass(child, drop_forward_subclass_proc, kDropForwardSubclassId, 0);
+    }
+    return TRUE;
+}
+
+void enable_file_drop_support(HWND hwnd) {
+    if (!hwnd || !IsWindow(hwnd)) return;
+    DragAcceptFiles(hwnd, TRUE);
+    EnumChildWindows(hwnd, enable_file_drop_child_proc, 0);
 }
 
 // ---- UI rebuild (language switch) --------------------------------------
@@ -8385,11 +8689,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
             g.side_tab_channels = mk(side_tab_channels_text(), IDC_SIDE_TAB_CHANNELS, 0);
             g.side_tab_points = mk(side_tab_points_text(), IDC_SIDE_TAB_POINTS, 0);
-            g.side_scrollbar = CreateWindowExW(
-                0, L"SCROLLBAR", nullptr,
-                WS_CHILD | WS_CLIPSIBLINGS | SBS_VERT,
-                0, 0, 10, 10, hwnd,
-                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_CHAN_BASE - 1)), inst, nullptr);
             g.side_channel_hint = mk_panel_ctl(L"STATIC", side_channel_hint_text(),
                                                SS_LEFT | SS_NOPREFIX, IDC_SIDE_CHANNEL_HINT, g.side_channel_controls);
             g.side_global_formula_label = mk_panel_ctl(L"STATIC", side_global_formula_label_text(), SS_LEFT, 0, g.side_channel_controls);
@@ -8437,6 +8736,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g.axis_font = CreateFontW(-11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                       DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                       CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+            enable_file_drop_support(hwnd);
             SetTimer(hwnd, 2, 50, nullptr);   // hover tracking timer
             update_theme_brushes();
             sync_menu();
@@ -8453,7 +8753,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 InvalidateRect(g.welcome_wnd, nullptr, FALSE);
                 return 0;
             }
-            InvalidateRect(hwnd, nullptr, FALSE);
+            RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
             return 0;
         case WM_GETMINMAXINFO: {
             MINMAXINFO* m = reinterpret_cast<MINMAXINFO*>(lp);
@@ -8489,9 +8789,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case WM_CTLCOLOREDIT: {
             HDC dc = reinterpret_cast<HDC>(wp);
-            SetBkColor(dc, g_theme->bg_panel);
+            SetBkColor(dc, g_theme->bg_plot);
             SetTextColor(dc, g_theme->text_primary);
-            return reinterpret_cast<LRESULT>(g_panel_brush);
+            return reinterpret_cast<LRESULT>(g_input_brush ? g_input_brush : g_panel_brush);
         }
         case WM_MEASUREITEM: {
             MEASUREITEMSTRUCT* mis = reinterpret_cast<MEASUREITEMSTRUCT*>(lp);
@@ -8948,9 +9248,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         if (index >= 0 && index < static_cast<int>(g.point_groups.size())) {
                             g.active_point_group = index;
                             g.marker_color = g.point_groups[static_cast<std::size_t>(index)].color;
+                            sync_point_display_from_active_group();
                             save_runtime_settings();
                             if (g.settings_wnd) refresh_settings_controls();
                             load_side_point_group_controls();
+                            refresh_side_panel_controls();
                             set_status();
                             InvalidateRect(hwnd, nullptr, FALSE);
                         }
@@ -8967,6 +9269,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         save_runtime_settings();
                         if (g.settings_wnd) refresh_settings_controls();
                         load_side_point_group_controls();
+                        refresh_side_panel_controls();
                         set_status();
                         InvalidateRect(hwnd, nullptr, FALSE);
                     }
@@ -9064,24 +9367,38 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 case IDC_SIDE_PT_DX:
                 case IDC_SIDE_PT_DY:
                 case IDC_SIDE_PT_INVDT:
-                case IDC_SIDE_PT_DIST:
-                case IDC_SIDE_PT_SNAP: {
+                case IDC_SIDE_PT_DIST: {
                     const SettingsSnapshot before = capture_settings_snapshot();
+                    PointDisplay* display = active_point_display();
+                    if (!display) return 0;
                     toggle_checked_state(GetDlgItem(hwnd, id));
                     auto checked = [&](int ctl_id) {
                         return is_toggle_checked(GetDlgItem(hwnd, ctl_id));
                     };
-                    g.pdisp.number = checked(IDC_SIDE_PT_NUM);
-                    g.pdisp.x = checked(IDC_SIDE_PT_X);
-                    g.pdisp.y = checked(IDC_SIDE_PT_Y);
-                    g.pdisp.dx = checked(IDC_SIDE_PT_DX);
-                    g.pdisp.dy = checked(IDC_SIDE_PT_DY);
-                    g.pdisp.inv_dt = checked(IDC_SIDE_PT_INVDT);
-                    g.pdisp.dist = checked(IDC_SIDE_PT_DIST);
-                    g.snap_to_data = checked(IDC_SIDE_PT_SNAP);
+                    display->number = checked(IDC_SIDE_PT_NUM);
+                    display->x = checked(IDC_SIDE_PT_X);
+                    display->y = checked(IDC_SIDE_PT_Y);
+                    display->dx = checked(IDC_SIDE_PT_DX);
+                    display->dy = checked(IDC_SIDE_PT_DY);
+                    display->inv_dt = checked(IDC_SIDE_PT_INVDT);
+                    display->dist = checked(IDC_SIDE_PT_DIST);
+                    g.pdisp = *display;
                     record_settings_change(before);
                     save_runtime_settings();
                     if (g.settings_wnd) refresh_settings_controls();
+                    sync_point_display_from_active_group();
+                    refresh_side_panel_controls();
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                    return 0;
+                }
+                case IDC_SIDE_PT_SNAP: {
+                    const SettingsSnapshot before = capture_settings_snapshot();
+                    toggle_checked_state(GetDlgItem(hwnd, id));
+                    g.snap_to_data = is_toggle_checked(GetDlgItem(hwnd, id));
+                    record_settings_change(before);
+                    save_runtime_settings();
+                    if (g.settings_wnd) refresh_settings_controls();
+                    refresh_side_panel_controls();
                     InvalidateRect(hwnd, nullptr, FALSE);
                     return 0;
                 }
@@ -9132,27 +9449,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             break;
         }
-        case WM_VSCROLL:
-            if (reinterpret_cast<HWND>(lp) == g.side_scrollbar) {
-                SCROLLINFO si{};
-                si.cbSize = sizeof(si);
-                si.fMask = SIF_ALL;
-                GetScrollInfo(g.side_scrollbar, SB_CTL, &si);
-                int next = g.side_scroll_y;
-                switch (LOWORD(wp)) {
-                    case SB_LINEUP: next -= 24; break;
-                    case SB_LINEDOWN: next += 24; break;
-                    case SB_PAGEUP: next -= static_cast<int>(si.nPage); break;
-                    case SB_PAGEDOWN: next += static_cast<int>(si.nPage); break;
-                    case SB_THUMBPOSITION:
-                    case SB_THUMBTRACK: next = si.nTrackPos; break;
-                    case SB_TOP: next = 0; break;
-                    case SB_BOTTOM: next = g.side_scroll_max; break;
-                }
-                scroll_side_panel(next - g.side_scroll_y);
-                return 0;
-            }
-            break;
         case WM_MOUSEWHEEL: {
             POINT pt = {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
             ScreenToClient(hwnd, &pt);

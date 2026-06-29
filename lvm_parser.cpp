@@ -47,6 +47,46 @@ std::string second_cell(const std::string& line) {
     return strip(line.substr(first_tab + 1, second_tab == std::string::npos ? std::string::npos : second_tab - first_tab - 1));
 }
 
+std::vector<std::string> split_tab_cells(const std::string& line) {
+    std::vector<std::string> cells;
+    std::string field;
+    for (char ch : line) {
+        if (ch == '\t') {
+            cells.push_back(strip(field));
+            field.clear();
+        } else {
+            field.push_back(ch);
+        }
+    }
+    cells.push_back(strip(field));
+    return cells;
+}
+
+bool is_axis_label(const std::string& text) {
+    return text == "Time" || text == "X_Value" || text == "X" || text == "Comment";
+}
+
+std::string sanitize_channel_label(const std::string& raw, std::size_t fallback_index) {
+    std::string label = strip(raw);
+    if (label.empty()) {
+        return "Channel_" + std::to_string(fallback_index + 1);
+    }
+    const auto bracket = label.find('[');
+    if (bracket != std::string::npos) {
+        const std::string prefix = strip(label.substr(0, bracket));
+        if (!prefix.empty()) label = prefix;
+    }
+    const auto paren = label.find('(');
+    if (paren != std::string::npos) {
+        const std::string prefix = strip(label.substr(0, paren));
+        if (!prefix.empty()) label = prefix;
+    }
+    if (label.empty() || is_axis_label(label)) {
+        return "Channel_" + std::to_string(fallback_index + 1);
+    }
+    return label;
+}
+
 // First tab-delimited cell, stripped (Python: line.partition("\t")[0].strip()).
 bool is_metadata_line(const std::string& line) {
     return metadata_keys().count(first_cell(line)) != 0;
@@ -330,6 +370,8 @@ Dataset read_lvm_file(const std::string& path, const LoadOptions& options, bool 
     PendingSectionTime pending_section{};
     ActiveSectionTime active_section{};
     bool used_header_time_rebuild = false;
+    bool section_metadata_seen = false;
+    std::vector<std::string> column_labels;
     for (; std::getline(in, raw_line); ++line_index) {
         if (options.cancel_flag && (line_index & 0xFF) == 0 &&
             options.cancel_flag->load(std::memory_order_relaxed)) {
@@ -343,13 +385,25 @@ Dataset read_lvm_file(const std::string& path, const LoadOptions& options, bool 
             ++header_count;
             section_has_data = false;
             activate_section_time(pending_section, have_section_anchor, section_anchor_seconds, active_section);
+            section_metadata_seen = false;
             pending_section.reset();
             continue;
         }
         if (starts_with(line, "***")) {
             continue;
         }
+        if (header_count > 0 && !section_metadata_seen && column_labels.empty()) {
+            const RowSummary row = summarize_numeric_row(line);
+            if (row.numeric_count == 0) {
+                const std::vector<std::string> cells = split_tab_cells(line);
+                if (cells.size() > 1) {
+                    column_labels = std::move(cells);
+                    continue;
+                }
+            }
+        }
         if (is_metadata_line(line)) {
+            if (header_count > 0) section_metadata_seen = true;
             update_section_metadata(line, pending_section);
             continue;
         }
@@ -472,7 +526,8 @@ Dataset read_lvm_file(const std::string& path, const LoadOptions& options, bool 
     std::vector<std::string> kept_names;
     for (std::size_t i = 1; i < columns.size(); ++i) {
         if (i < column_has_value.size() && column_has_value[i]) {
-            kept_names.push_back("Channel_" + std::to_string(kept_channels.size() + 1));
+            const std::string raw_label = (i < column_labels.size()) ? column_labels[i] : "";
+            kept_names.push_back(sanitize_channel_label(raw_label, kept_channels.size()));
             kept_channels.push_back(std::move(columns[i]));
         }
     }

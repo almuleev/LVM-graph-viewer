@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.10.7
+
+- Исправлены подписи в верхнем меню: пункты общих настроек, горячих клавиш, линий и вертикального панорамирования больше не обрезаются.
+- Fixed top-menu labels so general settings, hotkeys, line tools, and vertical panning are shown in full.
+- Добавлены глобальные подписи осей X/Y, которые отображаются в углах графика и настраиваются отдельно в окне настроек.
+- Added global X/Y axis labels rendered in the graph corners, with dedicated settings fields.
+- Настройка отображения измерительных значений теперь хранится отдельно для каждой группы точек.
+- Measurement read-outs are now stored separately for each point group.
+- Улучшена обработка `.lvm`: имена каналов из чередующихся таблиц сохраняются корректнее, а секции времени восстанавливаются точнее.
+- Improved `.lvm` parsing: channel names from interleaved tables are preserved more reliably, and section timing is reconstructed more accurately.
+- Окна горячих клавиш и выбора диапазона подстроены под размеры экрана и не блокируют основное приложение.
+- The hotkeys dialog and range-selection prompt now fit the screen better and no longer block the main app.
+
 ## v0.10.5
 
 - Доработана работа с пропущенными промежутками: подписи внутри графика убраны, сами разрывы по-прежнему выделяются, а подробная информация теперь открывается отдельным окном по клику.
