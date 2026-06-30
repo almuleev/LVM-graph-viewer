@@ -13,6 +13,8 @@ $files = @(
     "Start GUI.bat",
     "run.bat",
     "README.md",
+    "README_EN.md",
+    "README_RU.md",
     "LICENSE"
 )
 

@@ -58,6 +58,8 @@ using std::min;
 #include <gdiplus.h>
 
 #include "analysis.hpp"
+#include "export_helpers.hpp"
+#include "formula_engine.hpp"
 #include "lvm_parser.hpp"
 
 namespace {
@@ -82,6 +84,9 @@ enum {
     IDC_SIDEPANEL,      // toolbar: show / hide the docked side panel
     IDC_SHOW_ALL,
     IDC_HIDE_ALL,
+    IDC_EXPORT_SCOPE_CURRENT,
+    IDC_EXPORT_SCOPE_FRAGMENT,
+    IDC_EXPORT_SCOPE_RAW,
 
     // Menu-only commands (no toolbar button).
     IDM_EXIT = 1100,
@@ -342,6 +347,25 @@ struct RangePromptState {
 
 RangePromptState g_range_prompt;
 
+struct ExportPromptState {
+    HWND wnd = nullptr;
+    HWND current_radio = nullptr;
+    HWND fragment_radio = nullptr;
+    HWND raw_radio = nullptr;
+    bool done = false;
+    bool accepted = false;
+    ExportDataScope selected_scope = ExportDataScope::CurrentView;
+    std::wstring title;
+    std::wstring intro;
+    std::wstring current_text;
+    std::wstring fragment_text;
+    std::wstring raw_text;
+    std::wstring continue_text;
+    std::wstring cancel_text;
+};
+
+ExportPromptState g_export_prompt;
+
 struct HotkeysDialogState {
     HWND wnd = nullptr;
     HWND list = nullptr;
@@ -482,7 +506,7 @@ struct Strings {
 static const Strings kRu = {
     L"LVM Viewer",
     L"Файл", L"Вид", L"Точки", L"Линии", L"Маркеры", L"Справка",
-    L"Открыть файл…\tCtrl+O", L"Сохранить PNG…\tCtrl+S", L"Сохранить CSV…\tCtrl+E", L"Отменить\tCtrl+Z", L"Повторить\tCtrl+Shift+Z", L"Выход\tAlt+F4",
+    L"Открыть файл…\tCtrl+O", L"Сохранить PNG…\tCtrl+S", L"Выгрузить CSV…\tCtrl+E", L"Отменить\tCtrl+Z", L"Повторить\tCtrl+Shift+Z", L"Выход\tAlt+F4",
     L"Время / Гц\tM", L"Увеличить\t+", L"Уменьшить\t−", L"Сбросить вид\tHome", L"Автомасштабирование", L"Сглаживание\tC", L"Вертикальное панорамирование\tP", L"Play / Pause\tПробел", L"Тёмная тема\tT", L"Скорость",
     L"Точки\tV", L"Настройки", L"Очистить\tDelete",
     L"Вертикальная\tL", L"Горизонтальная\tH", L"Очистить",
@@ -497,13 +521,13 @@ static const Strings kRu = {
     L"Примагничивать маркеры к графику",
     L"Настройки точек измерения",
     L"Горячие клавиши — LVM Viewer", L"О программе — LVM Viewer",
-    L"Нет данных", L"Сначала откройте файл.", L"Не удалось сохранить PNG.", L"Не удалось сохранить CSV.", L"Ошибка чтения",
+    L"Нет данных", L"Сначала откройте файл.", L"Не удалось сохранить PNG.", L"Не удалось выгрузить CSV.", L"Ошибка чтения",
     L"LVM Viewer", L"Просмотрщик сигналов LabVIEW (.lvm / .txt)",
     L"РљР°Рє СЂР°Р±РѕС‚Р°С‚СЊ СЃ РїСЂРёР»РѕР¶РµРЅРёРµРј:\r   вЂў  В«РћС‚РєСЂС‹С‚СЊ С„Р°Р№Р»В» (O) вЂ” Р·Р°РіСЂСѓР·РёС‚Рµ .lvm РёР»Рё .txt.\r   вЂў  В«Р’СЂРµРјСЏ / Р“С†В» (M) вЂ” РіСЂР°С„РёРє СЃРёРіРЅР°Р»Р° РёР»Рё РµРіРѕ СЃРїРµРєС‚СЂ (Р‘РџР¤).\r   вЂў  В«РР·РјРµСЂРµРЅРёРµВ» (V) вЂ” РєР»РёРєР°Р№С‚Рµ С‚РѕС‡РєРё РЅР° РіСЂР°С„РёРєРµ. Р§С‚Рѕ РїРѕРєР°Р·С‹РІР°С‚СЊ\r       Сѓ С‚РѕС‡РµРє Рё РїСЂРёРјР°РіРЅРёС‡РёРІР°РЅРёРµ вЂ” РІ РѕРєРЅРµ В«РќР°СЃС‚СЂРѕР№РєРё С‚РѕС‡РµРєВ».\r   вЂў  РљРѕР»РµСЃРѕ РјС‹С€Рё вЂ” РјР°СЃС€С‚Р°Р±, С‚СЏРіР° Р›РљРњ вЂ” РїСЂРѕРєСЂСѓС‚РєР° РїРѕ РІСЂРµРјРµРЅРё.\r   вЂў  В«Р¤РёРєСЃ. YВ» вЂ” Р·Р°С„РёРєСЃРёСЂРѕРІР°С‚СЊ РјР°СЃС€С‚Р°Р± РїРѕ РІС‹СЃРѕС‚Рµ.\r   вЂў  РџСЂРѕР±РµР» вЂ” РІРѕСЃРїСЂРѕРёР·РІРµРґРµРЅРёРµ РІ СЂРµР°Р»СЊРЅРѕРј РІСЂРµРјРµРЅРё (1 СЃ = 1 СЃ).\r   вЂў  F1 вЂ” РїРѕР»РЅС‹Р№ СЃРїРёСЃРѕРє РіРѕСЂСЏС‡РёС… РєР»Р°РІРёС€.",
     L"Открыть файл", L"Настройки точек…", L"Горячие клавиши", L"Начать работу",
     L"Файлы\n  O / Ctrl+O\t— Открыть\n  S / Ctrl+S\t— PNG\n  E / Ctrl+E\t— CSV\n  Ctrl+Z\t— Отменить\n  Ctrl+Shift+Z\t— Повторить\n\nВид\n  M\t— Время/Гц\n  C\t— Сглаживание\n  + / ↑\t— Увеличить\n  − / ↓\t— Уменьшить\n  ← / →\t— Сдвиг влево/вправо\n  Home\t— Сброс\n  Ctrl+Home\t— В начало\n  Ctrl+End\t— В конец\n  Пробел\t— Play / Pause\n\nЛинии и маркеры\n  L\t— Вертикальная линия\n  H\t— Горизонтальная линия\n  K\t— Маркер\n  Esc\t— Отменить добавление\n\nТочки\n  V\t— Режим точек вкл/выкл\n  Delete\t— Очистить точки\n\nМышь\n  Колесо\t— Масштаб под курсором\n  Shift+колесо\t— Прокрутка влево/вправо\n  Ctrl+колесо\t— Масштаб по высоте (Y)\n  Alt+колесо\t— Сдвиг вверх/вниз (Y)\n  ЛКМ + тяга\t— Панорамирование (вкл/выкл вертикальное через Вид)\n  ЛКМ\t— Поставить точку / линию / маркер (в режиме)\n  ПКМ\t— Очистить точки\n\n  F1\t— Эта справка",
     L"LVM Viewer — просмотрщик сигналов LabVIEW (.lvm / .txt)\n\nНативное приложение Win32 + GDI/GDI+, без внешних\nзависимостей и без Qt. Время и спектр (БПФ), измерения\nс примагничиванием, направляющие линии, визуальное\nсглаживание, экспорт PNG/CSV.\n\nСборка: build_gui.ps1 (MinGW g++) или make gui.",
-    L"Открыть файл…", L"Сохранить PNG", L"Сохранить CSV", L"Переключить Время / Гц", L"Воспроизведение", L"Пауза", L"Режим измерения точек", L"Сбросить вид", L"Автомасштабирование", L"Настройки точек",
+    L"Открыть файл…", L"PNG", L"CSV", L"Переключить Время / Гц", L"Воспроизведение", L"Пауза", L"Режим измерения точек", L"Сбросить вид", L"Автомасштабирование", L"Настройки точек",
     L"Русский", L"English", L"Язык",
     L"Лёгкий режим",
     L"   |   Лёгкий режим: открыт только выбранный временной фрагмент",
@@ -530,12 +554,12 @@ static const Strings kRu = {
     L"Цвет маркеров…",
     L"Ошибка",
     L"Сохранено (PNG): ",
-    L"Сохранено (CSV): ",
+    L"Выгружено (CSV): ",
     L"LVM / текстовые файлы\0*.lvm;*.txt\0Все файлы\0*.*\0",
     L"PNG изображение\0*.png\0Все файлы\0*.*\0",
     L"CSV файл\0*.csv\0Все файлы\0*.*\0",
-    L"Time",
-    L"Frequency",
+    L"Время",
+    L"Частота",
     L"Кликните на графике, чтобы поставить вертикальную линию (Esc — отмена). Можно добавить несколько линий подряд.",
     L"Кликните на графике, чтобы поставить горизонтальную линию (Esc — отмена). Можно добавить несколько линий подряд.",
     L"Кликните на графике, чтобы поставить маркер (Esc — отмена)."
@@ -544,7 +568,7 @@ static const Strings kRu = {
 static const Strings kEn = {
     L"LVM Viewer",
     L"File", L"View", L"Points", L"Lines", L"Markers", L"Help",
-    L"Open file…\tCtrl+O", L"Save PNG…\tCtrl+S", L"Save CSV…\tCtrl+E", L"Undo\tCtrl+Z", L"Redo\tCtrl+Shift+Z", L"Exit\tAlt+F4",
+    L"Open file…\tCtrl+O", L"Save PNG…\tCtrl+S", L"Export CSV…\tCtrl+E", L"Undo\tCtrl+Z", L"Redo\tCtrl+Shift+Z", L"Exit\tAlt+F4",
     L"Time / Hz\tM", L"Zoom in\t+", L"Zoom out\t−", L"Reset view\tHome", L"Auto zoom", L"Smoothing\tC", L"Vertical pan\tP", L"Play / Pause\tSpace", L"Dark theme\tT", L"Speed",
     L"Points\tV", L"Settings", L"Clear\tDelete",
     L"Vertical\tL", L"Horizontal\tH", L"Clear",
@@ -559,13 +583,13 @@ static const Strings kEn = {
     L"Snap markers to graph",
     L"Measurement point settings",
     L"Keyboard shortcuts — LVM Viewer", L"About — LVM Viewer",
-    L"No data", L"Open a file first.", L"Failed to save PNG.", L"Failed to save CSV.", L"Read error",
+    L"No data", L"Open a file first.", L"Failed to save PNG.", L"Failed to export CSV.", L"Read error",
     L"LVM Viewer", L"LabVIEW signal viewer (.lvm / .txt)",
     L"How to use the app:\r   •  «Open file» (O) — load a .lvm or .txt.\r   •  «Time / Hz» (M) — signal plot or its FFT spectrum.\r   •  «Measure» (V) — click points on the plot. What to show\r       at points and snapping — in the «Point settings» window.\r   •  Mouse wheel — zoom, left-drag — pan.\r   •  «Lock Y» — freeze the vertical scale.\r   •  Space — real-time playback (1 s = 1 s).\r   •  F1 — full list of keyboard shortcuts.",
     L"Open file", L"Point settings…", L"Keyboard shortcuts", L"Start working",
     L"Files\n  O / Ctrl+O\t— Open\n  S / Ctrl+S\t— PNG\n  E / Ctrl+E\t— CSV\n  Ctrl+Z\t— Undo\n  Ctrl+Shift+Z\t— Redo\n\nView\n  M\t— Time / Hz\n  C\t— Smoothing\n  + / ↑\t— Zoom in\n  − / ↓\t— Zoom out\n  ← / →\t— Pan left / right\n  Home\t— Reset view\n  Ctrl+Home\t— Go to start\n  Ctrl+End\t— Go to end\n  Space\t— Play / Pause\n\nLines and markers\n  L\t— Vertical line\n  H\t— Horizontal line\n  K\t— Marker\n  Esc\t— Cancel adding\n\nPoints\n  V\t— Measure mode on/off\n  Delete\t— Clear points\n\nMouse\n  Wheel\t— Zoom under cursor\n  Shift+wheel\t— Pan left / right\n  Ctrl+wheel\t— Zoom Y\n  Alt+wheel\t— Pan up/down (Y)\n  Left-drag\t— Pan (toggle vertical via View)\n  Left-click\t— Drop point / line / marker (in mode)\n  Right-click\t— Clear points\n\n  F1\t— This help",
     L"LVM Viewer — LabVIEW signal viewer (.lvm / .txt)\n\nNative Win32 + GDI/GDI+ application, no external\ndependencies, no Qt. Time and spectrum (FFT), measurements\nwith snapping, guide lines, visual smoothing, PNG/CSV export.\n\nBuild: build_gui.ps1 (MinGW g++) or make gui.",
-    L"Open file…", L"Save PNG", L"Save CSV", L"Toggle Time / Hz", L"Playback", L"Pause", L"Measurement point mode", L"Reset view", L"Auto zoom", L"Point settings",
+    L"Open file…", L"PNG", L"CSV", L"Toggle Time / Hz", L"Playback", L"Pause", L"Measurement point mode", L"Reset view", L"Auto zoom", L"Point settings",
     L"Русский", L"English", L"Language",
     L"Light mode",
     L"   |   Light mode: only the selected time fragment is open",
@@ -592,7 +616,7 @@ static const Strings kEn = {
     L"Marker colour…",
     L"Error",
     L"Saved (PNG): ",
-    L"Saved (CSV): ",
+    L"Exported (CSV): ",
     L"LVM / text files\0*.lvm;*.txt\0All files\0*.*\0",
     L"PNG image\0*.png\0All files\0*.*\0",
     L"CSV file\0*.csv\0All files\0*.*\0",
@@ -632,40 +656,6 @@ struct PointGroup {
     bool visible = true;
     PointDisplay display;
     std::vector<std::pair<double, double>> points;
-};
-
-enum class FormulaOp {
-    Number,
-    Variable,
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Neg,
-    FuncAbs,
-    FuncSqrt,
-    FuncSin,
-    FuncCos,
-    FuncTan,
-    FuncLog,
-    FuncExp
-};
-
-struct FormulaToken {
-    FormulaOp op = FormulaOp::Number;
-    double value = 0.0;
-};
-
-enum class TransformRuntimeKind : unsigned char {
-    Identity = 0,
-    Affine = 1,
-    CachedFormula = 2
-};
-
-struct AffineFormulaInfo {
-    bool valid = false;
-    double mul = 0.0;
-    double add = 0.0;
 };
 
 struct HotkeyBinding {
@@ -1121,6 +1111,7 @@ const wchar_t* axis_y_label_text() {
     return (g_str == &kEn) ? L"Y label:" : L"Буква Y:";
 }
 
+#if 0
 std::wstring default_channel_formula_text() {
     return L"x";
 }
@@ -1514,6 +1505,7 @@ double eval_formula_rpn(const std::vector<FormulaToken>& rpn, double x) {
     }
     return sp == 1 ? stack[0] : std::numeric_limits<double>::quiet_NaN();
 }
+#endif
 
 void normalize_active_point_group() {
     if (g.point_groups.empty()) {
@@ -3236,8 +3228,8 @@ LRESULT CALLBACK RangePromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             DRAWITEMSTRUCT* dis = reinterpret_cast<DRAWITEMSTRUCT*>(lp);
             if (!dis || !dis->hwndItem) break;
             const int ctl_id = GetDlgCtrlID(dis->hwndItem);
-            wchar_t txt[128]{};
-            GetWindowTextW(dis->hwndItem, txt, 128);
+            wchar_t txt[256]{};
+            GetWindowTextW(dis->hwndItem, txt, 256);
             const bool pressed = (dis->itemState & ODS_SELECTED) != 0;
             if (ctl_id == IDC_RANGE_PROMPT_OK) {
                 draw_welcome_action_button(dis->hDC, dis->rcItem, txt, pressed, true, false);
@@ -3264,6 +3256,159 @@ LRESULT CALLBACK RangePromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_range_prompt.wnd = nullptr;
             g_range_prompt.start_edit = nullptr;
             g_range_prompt.end_edit = nullptr;
+            return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+ExportDataScope export_prompt_selected_scope() {
+    if (g_export_prompt.raw_radio &&
+        SendMessageW(g_export_prompt.raw_radio, BM_GETCHECK, 0, 0) == BST_CHECKED) {
+        return ExportDataScope::RawData;
+    }
+    if (g_export_prompt.fragment_radio &&
+        SendMessageW(g_export_prompt.fragment_radio, BM_GETCHECK, 0, 0) == BST_CHECKED) {
+        return ExportDataScope::LoadedFragment;
+    }
+    return ExportDataScope::CurrentView;
+}
+
+LRESULT CALLBACK ExportPromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+        case WM_CREATE: {
+            HFONT font = g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+            HDC dc = GetDC(hwnd);
+            HGDIOBJ old_font = SelectObject(dc, font);
+            RECT client{};
+            GetClientRect(hwnd, &client);
+            const int client_w = std::max(0, static_cast<int>(client.right - client.left));
+            const int content_w = std::max(420, client_w - 36);
+            const int intro_h = 34;
+            const int choice_h = 52;
+            const int choice_gap = 10;
+            auto mkstatic = [&](const std::wstring& text, int x, int y, int w, int h) {
+                HWND ctl = CreateWindowExW(0, L"STATIC", text.c_str(),
+                                           WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX,
+                                           x, y, w, h, hwnd, nullptr,
+                                           reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
+                if (ctl) SendMessageW(ctl, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+                return ctl;
+            };
+            mkstatic(g_export_prompt.intro, 18, 16, content_w, intro_h);
+            g_export_prompt.current_radio = CreateWindowExW(
+                0, L"BUTTON", g_export_prompt.current_text.c_str(),
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTORADIOBUTTON | BS_MULTILINE | WS_GROUP,
+                18, 56, content_w, choice_h, hwnd,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_EXPORT_SCOPE_CURRENT)),
+                reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
+            g_export_prompt.fragment_radio = CreateWindowExW(
+                0, L"BUTTON", g_export_prompt.fragment_text.c_str(),
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTORADIOBUTTON | BS_MULTILINE,
+                18, 56 + choice_h + choice_gap, content_w, choice_h, hwnd,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_EXPORT_SCOPE_FRAGMENT)),
+                reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
+            g_export_prompt.raw_radio = CreateWindowExW(
+                0, L"BUTTON", g_export_prompt.raw_text.c_str(),
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTORADIOBUTTON | BS_MULTILINE,
+                18, 56 + (choice_h + choice_gap) * 2, content_w, choice_h + 8, hwnd,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_EXPORT_SCOPE_RAW)),
+                reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
+            const int continue_w = prompt_button_width(dc, g_export_prompt.continue_text.c_str(), 120);
+            const int cancel_w = prompt_button_width(dc, g_export_prompt.cancel_text.c_str(), 100);
+            const int button_gap = 10;
+            const int total_w = continue_w + cancel_w + button_gap;
+            int button_x = std::max(16, (client_w - total_w) / 2);
+            if (button_x + total_w > client_w - 16) {
+                button_x = std::max(16, client_w - 16 - total_w);
+            }
+            const int button_y = 260;
+            HWND ok = CreateWindowExW(
+                0, L"BUTTON", g_export_prompt.continue_text.c_str(),
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW | BS_DEFPUSHBUTTON,
+                button_x, button_y, continue_w, 28, hwnd,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDOK)),
+                reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
+            HWND cancel = CreateWindowExW(
+                0, L"BUTTON", g_export_prompt.cancel_text.c_str(),
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+                button_x + continue_w + button_gap, button_y, cancel_w, 28, hwnd,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDCANCEL)),
+                reinterpret_cast<LPCREATESTRUCT>(lp)->hInstance, nullptr);
+            if (g_export_prompt.current_radio) SendMessageW(g_export_prompt.current_radio, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            if (g_export_prompt.fragment_radio) SendMessageW(g_export_prompt.fragment_radio, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            if (g_export_prompt.raw_radio) SendMessageW(g_export_prompt.raw_radio, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            if (ok) SendMessageW(ok, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            if (cancel) SendMessageW(cancel, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+            if (g_export_prompt.current_radio) {
+                SendMessageW(g_export_prompt.current_radio, BM_SETCHECK, BST_CHECKED, 0);
+                SetFocus(g_export_prompt.current_radio);
+            }
+            SelectObject(dc, old_font);
+            ReleaseDC(hwnd, dc);
+            return 0;
+        }
+        case WM_COMMAND:
+            switch (LOWORD(wp)) {
+                case IDC_EXPORT_SCOPE_CURRENT:
+                case IDC_EXPORT_SCOPE_FRAGMENT:
+                case IDC_EXPORT_SCOPE_RAW:
+                    g_export_prompt.selected_scope = export_prompt_selected_scope();
+                    return 0;
+                case IDOK:
+                    g_export_prompt.selected_scope = export_prompt_selected_scope();
+                    g_export_prompt.accepted = true;
+                    DestroyWindow(hwnd);
+                    return 0;
+                case IDCANCEL:
+                    DestroyWindow(hwnd);
+                    return 0;
+            }
+            break;
+        case WM_CLOSE:
+            DestroyWindow(hwnd);
+            return 0;
+        case WM_ERASEBKGND: {
+            HDC dc = reinterpret_cast<HDC>(wp);
+            draw_prompt_surface(hwnd, dc);
+            return 1;
+        }
+        case WM_PAINT: {
+            PAINTSTRUCT ps{};
+            HDC dc = BeginPaint(hwnd, &ps);
+            draw_prompt_surface(hwnd, dc);
+            EndPaint(hwnd, &ps);
+            return 1;
+        }
+        case WM_CTLCOLORSTATIC:
+        case WM_CTLCOLORBTN: {
+            HDC dc = reinterpret_cast<HDC>(wp);
+            SetBkMode(dc, TRANSPARENT);
+            SetTextColor(dc, g_theme->text_primary);
+            return reinterpret_cast<LRESULT>(g_panel_brush);
+        }
+        case WM_DRAWITEM: {
+            DRAWITEMSTRUCT* dis = reinterpret_cast<DRAWITEMSTRUCT*>(lp);
+            if (!dis || !dis->hwndItem) break;
+            const int ctl_id = GetDlgCtrlID(dis->hwndItem);
+            wchar_t txt[128]{};
+            GetWindowTextW(dis->hwndItem, txt, 128);
+            const bool pressed = (dis->itemState & ODS_SELECTED) != 0;
+            if (ctl_id == IDOK) {
+                draw_welcome_action_button(dis->hDC, dis->rcItem, txt, pressed, true, false);
+                return TRUE;
+            }
+            if (ctl_id == IDCANCEL) {
+                draw_welcome_action_button(dis->hDC, dis->rcItem, txt, pressed, false, false);
+                return TRUE;
+            }
+            break;
+        }
+        case WM_DESTROY:
+            g_export_prompt.done = true;
+            g_export_prompt.wnd = nullptr;
+            g_export_prompt.current_radio = nullptr;
+            g_export_prompt.fragment_radio = nullptr;
+            g_export_prompt.raw_radio = nullptr;
             return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
@@ -3417,6 +3562,69 @@ bool prompt_light_mode_window(double range_start, double range_end, double& out_
     save_runtime_settings();
     out_start = g_range_prompt.start_value;
     out_end = g_range_prompt.end_value;
+    return true;
+}
+
+bool prompt_export_scope(ExportDataScope& out_scope) {
+    static ATOM atom = 0;
+    if (!atom) {
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = ExportPromptProc;
+        wc.hInstance = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(g.main, GWLP_HINSTANCE));
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.hbrBackground = nullptr;
+        wc.lpszClassName = L"LvmExportPrompt";
+        atom = RegisterClassExW(&wc);
+    }
+
+    g_export_prompt.done = false;
+    g_export_prompt.accepted = false;
+    g_export_prompt.selected_scope = ExportDataScope::CurrentView;
+    const bool en = (g_str == &kEn);
+    g_export_prompt.title = export_prompt_title_text(en);
+    g_export_prompt.intro = export_prompt_intro_text(en);
+    g_export_prompt.current_text = export_scope_choice_text(ExportDataScope::CurrentView, en);
+    g_export_prompt.fragment_text = export_scope_choice_text(ExportDataScope::LoadedFragment, en);
+    g_export_prompt.raw_text = export_scope_choice_text(ExportDataScope::RawData, en);
+    g_export_prompt.continue_text = export_prompt_continue_text(en);
+    g_export_prompt.cancel_text = export_prompt_cancel_text(en);
+    g_export_prompt.wnd = CreateWindowExW(
+        WS_EX_DLGMODALFRAME | WS_EX_TOOLWINDOW,
+        L"LvmExportPrompt",
+        g_export_prompt.title.c_str(),
+        WS_CAPTION | WS_SYSMENU | WS_POPUP | WS_VISIBLE,
+        CW_USEDEFAULT, CW_USEDEFAULT, 660, 330,
+        g.main, nullptr,
+        reinterpret_cast<HINSTANCE>(GetWindowLongPtr(g.main, GWLP_HINSTANCE)),
+        nullptr);
+    if (!g_export_prompt.wnd) return false;
+
+    RECT mr{}, wr{};
+    GetWindowRect(g.main, &mr);
+    GetWindowRect(g_export_prompt.wnd, &wr);
+    SetWindowPos(
+        g_export_prompt.wnd, HWND_TOP,
+        mr.left + ((mr.right - mr.left) - (wr.right - wr.left)) / 2,
+        mr.top + ((mr.bottom - mr.top) - (wr.bottom - wr.top)) / 2,
+        0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+    EnableWindow(g.main, FALSE);
+    if (g_export_prompt.current_radio) {
+        SetFocus(g_export_prompt.current_radio);
+    }
+
+    MSG msg;
+    while (!g_export_prompt.done && GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        if (!IsDialogMessageW(g_export_prompt.wnd, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+
+    EnableWindow(g.main, TRUE);
+    SetForegroundWindow(g.main);
+    if (!g_export_prompt.accepted) return false;
+    out_scope = g_export_prompt.selected_scope;
     return true;
 }
 
@@ -5656,10 +5864,10 @@ void ensure_channel_formula_vectors() {
     if (g.global_formula.empty()) g.global_formula = default_channel_formula_text();
     if (g.global_formula_rpn.empty()) {
         std::wstring error;
-        compile_formula_rpn(g.global_formula, g.global_formula_rpn, error);
+        compile_formula_rpn(g.global_formula, g.global_formula_rpn, error, g_str == &kEn);
         if (g.global_formula_rpn.empty()) {
             g.global_formula = default_channel_formula_text();
-            compile_formula_rpn(g.global_formula, g.global_formula_rpn, error);
+            compile_formula_rpn(g.global_formula, g.global_formula_rpn, error, g_str == &kEn);
         }
     }
     g.global_formula_identity = formula_rpn_is_identity(g.global_formula_rpn);
@@ -5673,7 +5881,7 @@ void ensure_channel_formula_vectors() {
         if (g.channel_formulas[i].empty()) g.channel_formulas[i] = default_channel_formula_text();
         if (g.channel_formula_rpn[i].empty()) {
             std::wstring error;
-            compile_formula_rpn(g.channel_formulas[i], g.channel_formula_rpn[i], error);
+            compile_formula_rpn(g.channel_formulas[i], g.channel_formula_rpn[i], error, g_str == &kEn);
         }
         g.channel_formula_identity[i] = formula_rpn_is_identity(g.channel_formula_rpn[i]) ? 1 : 0;
         const AffineFormulaInfo local_affine = analyze_formula_rpn_affine(g.channel_formula_rpn[i]);
@@ -5766,7 +5974,7 @@ void reset_channel_transform(std::size_t ci) {
     if (ci < g.channel_formula_rpn.size()) {
         g.channel_formula_rpn[ci].clear();
         std::wstring error;
-        compile_formula_rpn(g.channel_formulas[ci], g.channel_formula_rpn[ci], error);
+        compile_formula_rpn(g.channel_formulas[ci], g.channel_formula_rpn[ci], error, g_str == &kEn);
     }
     invalidate_formula_runtime_channel(ci);
     ensure_channel_formula_vectors();
@@ -5810,77 +6018,120 @@ void on_signal_transform_changed(bool preserve_history = false) {
     save_runtime_settings();
 }
 
-// Export the visible segment: time-domain rows (Time mode) or spectrum (Hz).
-bool save_csv(const std::wstring& path) {
-    std::ofstream out(to_acp(path.c_str()), std::ios::binary);
-    if (!out) return false;
-    ensure_channel_formula_vectors();
-    if (g.freq_mode) {
-        if (!ensure_current_spectrum()) return false;
-        std::vector<std::size_t> cols;
-        out << g_str->csv_freq;
-        for (std::size_t j = 0; j < g.spec.amp.size(); ++j) {
-            const int ci = (j < g.spec_channel_indices.size()) ? g.spec_channel_indices[j] : -1;
-            if (ci >= 0 && g.visible[ci]) { out << "," << current_channel_label(static_cast<std::size_t>(ci)); cols.push_back(j); }
-        }
-        out << "\n";
-        for (std::size_t k = 0; k < g.spec.freqs.size(); ++k) {
-            const double fr = g.spec.freqs[k];
-            if (fr < g.freq_start || fr > g.freq_end) continue;
-            out << numfmt(fr);
-            for (std::size_t j : cols) out << "," << numfmt(g.spec.amp[j][k]);
-            out << "\n";
-        }
-    } else {
-        std::vector<std::size_t> cols;
-        out << g_str->csv_time;
-        for (std::size_t c = 0; c < g.ds.channel_count(); ++c)
-            if (g.visible[c]) { out << "," << current_channel_label(c); cols.push_back(c); }
-        out << "\n";
-        for (std::size_t r = 0; r < g.ds.rows(); ++r) {
-            const double tt = g.ds.time[r];
-            if (tt < g.win_start || tt > g.win_end) continue;
-            out << numfmt(tt);
-            for (std::size_t c : cols) out << "," << numfmt(transform_channel_value(c, g.ds.channels[c][r]));
-            out << "\n";
-        }
+double export_time_channel_value(std::size_t channel_index, std::size_t row_index) {
+    if (channel_index >= g.ds.channel_count()) return std::numeric_limits<double>::quiet_NaN();
+    const auto& column = g.ds.channels[channel_index];
+    if (row_index >= column.size()) return std::numeric_limits<double>::quiet_NaN();
+
+    const double raw = column[row_index];
+    if (std::isnan(raw)) return raw;
+    if (!g.has_non_identity_formula || channel_index >= g.channel_transform_kind.size()) return raw;
+
+    const TransformRuntimeKind kind = g.channel_transform_kind[channel_index];
+    if (kind == TransformRuntimeKind::Identity) return raw;
+    if (kind == TransformRuntimeKind::Affine) {
+        return raw * g.channel_transform_mul[channel_index] + g.channel_transform_add[channel_index];
     }
-    return true;
+    ensure_transformed_channel_cache(channel_index);
+    if (channel_index < g.transformed_channel_cache.size() &&
+        row_index < g.transformed_channel_cache[channel_index].size()) {
+        return g.transformed_channel_cache[channel_index][row_index];
+    }
+    return transform_channel_value(channel_index, raw);
 }
 
-bool save_txt_view(const std::wstring& path) {
+bool save_tabular_export(const std::wstring& path, ExportDataScope scope, bool csv) {
     std::ofstream out(to_acp(path.c_str()), std::ios::binary);
     if (!out) return false;
+
+    const char sep = csv ? ',' : '\t';
+    const char* line_end = csv ? "\n" : "\r\n";
+
+    if (scope == ExportDataScope::RawData) {
+        const std::vector<double>& time_source = g.ds.raw_time.empty() ? g.ds.time : g.ds.raw_time;
+        std::size_t row_count = std::min(time_source.size(), g.ds.rows());
+        for (std::size_t c = 0; c < g.ds.channel_count(); ++c) {
+            row_count = std::min(row_count, g.ds.channels[c].size());
+        }
+        out << to_acp(g_str->csv_time);
+        for (std::size_t c = 0; c < g.ds.channel_count(); ++c) {
+            out << sep << current_channel_label(c);
+        }
+        out << line_end;
+        for (std::size_t r = 0; r < row_count; ++r) {
+            out << numfmt(time_source[r]);
+            for (std::size_t c = 0; c < g.ds.channel_count(); ++c) {
+                out << sep << numfmt(g.ds.channels[c][r]);
+            }
+            out << line_end;
+        }
+        return true;
+    }
+
     ensure_channel_formula_vectors();
     if (g.freq_mode) {
         if (!ensure_current_spectrum()) return false;
         std::vector<std::size_t> cols;
-        out << "Frequency";
+        out << to_acp(g_str->csv_freq);
         for (std::size_t j = 0; j < g.spec.amp.size(); ++j) {
             const int ci = (j < g.spec_channel_indices.size()) ? g.spec_channel_indices[j] : -1;
-            if (ci >= 0 && g.visible[ci]) { out << "\t" << current_channel_label(static_cast<std::size_t>(ci)); cols.push_back(j); }
+            if (ci >= 0 && static_cast<std::size_t>(ci) < g.visible.size() && g.visible[static_cast<std::size_t>(ci)]) {
+                out << sep << current_channel_label(static_cast<std::size_t>(ci));
+                cols.push_back(j);
+            }
         }
-        out << "\r\n";
-        for (std::size_t k = 0; k < g.spec.freqs.size(); ++k) {
-            const double fr = g.spec.freqs[k];
-            if (fr < g.freq_start || fr > g.freq_end) continue;
-            out << numfmt(fr);
-            for (std::size_t j : cols) out << "\t" << numfmt(g.spec.amp[j][k]);
-            out << "\r\n";
+        out << line_end;
+
+        std::size_t begin = 0;
+        std::size_t end = g.spec.freqs.size();
+        if (scope == ExportDataScope::CurrentView) {
+            double start = g.freq_start;
+            double finish = g.freq_end;
+            if (start > finish) std::swap(start, finish);
+            const auto bounds = export_range_bounds(g.spec.freqs, start, finish);
+            begin = bounds.first;
+            end = bounds.second;
         }
-    } else {
-        std::vector<std::size_t> cols;
-        out << "Time";
-        for (std::size_t c = 0; c < g.ds.channel_count(); ++c)
-            if (g.visible[c]) { out << "\t" << current_channel_label(c); cols.push_back(c); }
-        out << "\r\n";
-        for (std::size_t r = 0; r < g.ds.rows(); ++r) {
-            const double tt = g.ds.time[r];
-            if (tt < g.win_start || tt > g.win_end) continue;
-            out << numfmt(tt);
-            for (std::size_t c : cols) out << "\t" << numfmt(transform_channel_value(c, g.ds.channels[c][r]));
-            out << "\r\n";
+        for (std::size_t k = begin; k < end; ++k) {
+            out << numfmt(g.spec.freqs[k]);
+            for (std::size_t j : cols) {
+                if (j < g.spec.amp.size() && k < g.spec.amp[j].size()) {
+                    out << sep << numfmt(g.spec.amp[j][k]);
+                } else {
+                    out << sep;
+                }
+            }
+            out << line_end;
         }
+        return true;
+    }
+
+    std::vector<std::size_t> cols;
+        out << to_acp(g_str->csv_time);
+        for (std::size_t c = 0; c < g.ds.channel_count(); ++c) {
+            if (c < g.visible.size() && g.visible[c]) {
+                out << sep << current_channel_label(c);
+                cols.push_back(c);
+            }
+        }
+    out << line_end;
+
+    std::size_t begin = 0;
+    std::size_t end = g.ds.rows();
+    if (scope == ExportDataScope::CurrentView) {
+        double start = g.win_start;
+        double finish = g.win_end;
+        clamp_time_window(start, finish);
+        const auto bounds = export_range_bounds(g.ds.time, start, finish);
+        begin = bounds.first;
+        end = bounds.second;
+    }
+    for (std::size_t r = begin; r < end; ++r) {
+        out << numfmt(g.ds.time[r]);
+        for (std::size_t c : cols) {
+            out << sep << numfmt(export_time_channel_value(c, r));
+        }
+        out << line_end;
     }
     return true;
 }
@@ -5926,14 +6177,16 @@ void save_png_dialog() {
 
 void save_csv_dialog() {
     if (!has_data()) { MessageBoxW(g.main, g_str->msg_openfirst, g_str->msg_nodata, MB_ICONINFORMATION); return; }
-    std::wstring def = file_stem() + (g.freq_mode ? L"_spectrum.csv" : L"_segment.csv");
+    ExportDataScope scope = ExportDataScope::CurrentView;
+    if (!prompt_export_scope(scope)) return;
+    std::wstring def = export_default_name(file_stem(), scope, true, g.freq_mode);
     std::wstring path;
     if (!save_dialog(path, g_str->filter_csv, L"csv", def)) return;
-    if (save_csv(path)) {
+    if (save_tabular_export(path, scope, true)) {
         const wchar_t* b = wcsrchr(path.c_str(), L'\\');
-        status_msg(std::wstring(g_str->msg_saved_csv) + (b ? b + 1 : path.c_str()));
+        status_msg(export_status_prefix(L"CSV", scope, g_str == &kEn) + (b ? b + 1 : path.c_str()));
     } else {
-        MessageBoxW(g.main, g_str->msg_savecsv_err, g_str->msg_error_title, MB_ICONERROR);
+        MessageBoxW(g.main, export_error_text(g_str == &kEn, true), g_str->msg_error_title, MB_ICONERROR);
     }
 }
 
@@ -5943,24 +6196,18 @@ const wchar_t* txt_filter() {
         : L"TXT файл\0*.txt\0Все файлы\0*.*\0";
 }
 
-const wchar_t* txt_saved_prefix() {
-    return (g_str == &kEn) ? L"Exported (TXT): " : L"Выгружено (TXT): ";
-}
-
-const wchar_t* txt_save_error() {
-    return (g_str == &kEn) ? L"Failed to export TXT." : L"Не удалось выгрузить TXT.";
-}
-
 void save_txt_dialog() {
     if (!has_data()) { MessageBoxW(g.main, g_str->msg_openfirst, g_str->msg_nodata, MB_ICONINFORMATION); return; }
-    std::wstring def = file_stem() + (g.freq_mode ? L"_spectrum.txt" : L"_segment.txt");
+    ExportDataScope scope = ExportDataScope::CurrentView;
+    if (!prompt_export_scope(scope)) return;
+    std::wstring def = export_default_name(file_stem(), scope, false, g.freq_mode);
     std::wstring path;
     if (!save_dialog(path, txt_filter(), L"txt", def)) return;
-    if (save_txt_view(path)) {
+    if (save_tabular_export(path, scope, false)) {
         const wchar_t* b = wcsrchr(path.c_str(), L'\\');
-        status_msg(std::wstring(txt_saved_prefix()) + (b ? b + 1 : path.c_str()));
+        status_msg(export_status_prefix(L"TXT", scope, g_str == &kEn) + (b ? b + 1 : path.c_str()));
     } else {
-        MessageBoxW(g.main, txt_save_error(), g_str->msg_error_title, MB_ICONERROR);
+        MessageBoxW(g.main, export_error_text(g_str == &kEn, false), g_str->msg_error_title, MB_ICONERROR);
     }
 }
 
@@ -6208,10 +6455,10 @@ void load_channel_formulas_from_ini() {
     g.global_formula = normalize_formula_text(global_buf);
     g.global_formula_rpn.clear();
     std::wstring global_error;
-    if (!compile_formula_rpn(g.global_formula, g.global_formula_rpn, global_error)) {
+    if (!compile_formula_rpn(g.global_formula, g.global_formula_rpn, global_error, g_str == &kEn)) {
         g.global_formula = default_channel_formula_text();
         g.global_formula_rpn.clear();
-        compile_formula_rpn(g.global_formula, g.global_formula_rpn, global_error);
+        compile_formula_rpn(g.global_formula, g.global_formula_rpn, global_error, g_str == &kEn);
     }
     const int stored_count = read_ini_int(L"transform", L"formula_count", static_cast<int>(g.channel_formulas.size()));
     for (std::size_t i = 0; i < g.channel_formulas.size(); ++i) {
@@ -6223,10 +6470,10 @@ void load_channel_formulas_from_ini() {
         g.channel_formulas[i] = normalize_formula_text(buf);
         g.channel_formula_rpn[i].clear();
         std::wstring error;
-        if (!compile_formula_rpn(g.channel_formulas[i], g.channel_formula_rpn[i], error)) {
+        if (!compile_formula_rpn(g.channel_formulas[i], g.channel_formula_rpn[i], error, g_str == &kEn)) {
             g.channel_formulas[i] = default_channel_formula_text();
             g.channel_formula_rpn[i].clear();
-            compile_formula_rpn(g.channel_formulas[i], g.channel_formula_rpn[i], error);
+            compile_formula_rpn(g.channel_formulas[i], g.channel_formula_rpn[i], error, g_str == &kEn);
         }
     }
     invalidate_formula_runtime();
@@ -6392,7 +6639,7 @@ std::wstring command_name(int command) {
     switch (command) {
         case IDC_OPEN: return en ? L"Open file" : L"Открыть файл";
         case IDC_SAVEPNG: return en ? L"Save PNG" : L"Сохранить PNG";
-        case IDC_SAVECSV: return en ? L"Save CSV" : L"Сохранить CSV";
+        case IDC_SAVECSV: return en ? L"Export CSV" : L"Выгрузить CSV";
         case IDM_UNDO: return en ? L"Undo" : L"Отменить";
         case IDM_REDO: return en ? L"Redo" : L"Повторить";
         case IDM_MODE_TIME: return en ? L"Time view" : L"Режим времени";
@@ -6812,7 +7059,7 @@ std::wstring toolbar_hover_text(HWND btn) {
     if (btn == g.show_all_btn) return en ? L"Show all channels" : L"Показать все каналы";
     if (btn == g.hide_all_btn) return en ? L"Hide all channels" : L"Скрыть все каналы";
     if (btn == g.savepng) return g_str->hover_png;
-    if (btn == g.savecsv) return g_str->hover_csv;
+    if (btn == g.savecsv) return en ? L"Export CSV" : L"Выгрузить CSV";
     return L"";
 }
 
@@ -7570,6 +7817,7 @@ void set_mode(bool freq_mode) {
 
 HMENU make_menu() {
     HMENU bar = CreateMenu();
+    const wchar_t* savecsv_menu = (g_str == &kEn) ? L"Export CSV…" : L"Выгрузить CSV…";
     const wchar_t* savetxt_menu = (g_str == &kEn) ? L"Export TXT…" : L"Выгрузить TXT…";
 
     {
@@ -7578,7 +7826,7 @@ HMENU make_menu() {
         HMENU file = CreatePopupMenu();
         std::wstring open_text = menu_text(en ? L"Open file…" : L"Открыть файл…", IDC_OPEN);
         std::wstring save_png_text = menu_text(en ? L"Save PNG…" : L"Сохранить PNG…", IDC_SAVEPNG);
-        std::wstring save_csv_text = menu_text(en ? L"Save CSV…" : L"Сохранить CSV…", IDC_SAVECSV);
+        std::wstring save_csv_text = menu_text(savecsv_menu, IDC_SAVECSV);
         std::wstring undo_text = menu_text(en ? L"Undo" : L"Отменить", IDM_UNDO);
         std::wstring redo_text = menu_text(en ? L"Redo" : L"Повторить", IDM_REDO);
         append_menu_item_owner_draw(file, IDC_OPEN, open_text);
@@ -7665,7 +7913,7 @@ HMENU make_menu() {
         HMENU file = CreatePopupMenu();
         std::wstring open_text = menu_text(en ? L"Open file…" : L"Открыть файл…", IDC_OPEN);
         std::wstring save_png_text = menu_text(en ? L"Save PNG…" : L"Сохранить PNG…", IDC_SAVEPNG);
-        std::wstring save_csv_text = menu_text(en ? L"Save CSV…" : L"Сохранить CSV…", IDC_SAVECSV);
+        std::wstring save_csv_text = menu_text(savecsv_menu, IDC_SAVECSV);
         std::wstring undo_text = menu_text(en ? L"Undo" : L"Отменить", IDM_UNDO);
         std::wstring redo_text = menu_text(en ? L"Redo" : L"Повторить", IDM_REDO);
         append_menu_item_owner_draw(file, IDC_OPEN, open_text);
@@ -7748,7 +7996,7 @@ HMENU make_menu() {
     HMENU file = CreatePopupMenu();
     append_menu_item_owner_draw(file, IDC_OPEN, L"Открыть файл…\tCtrl+O");
     append_menu_item_owner_draw(file, IDC_SAVEPNG, L"Сохранить PNG…\tCtrl+S");
-    append_menu_item_owner_draw(file, IDC_SAVECSV, L"Сохранить CSV…\tCtrl+E");
+    append_menu_item_owner_draw(file, IDC_SAVECSV, (g_str == &kEn) ? L"Export CSV…\tCtrl+E" : L"Выгрузить CSV…\tCtrl+E");
     append_menu_item_owner_draw(file, IDC_SAVETXT, savetxt_menu);
     AppendMenuW(file, MF_SEPARATOR, 0, nullptr);
     append_menu_item_owner_draw(file, IDM_UNDO, L"Отменить\tCtrl+Z");
@@ -7929,7 +8177,7 @@ bool read_formula_edit(HWND edit, std::wstring& formula, std::vector<FormulaToke
     GetWindowTextW(edit, buf, 512);
     formula = normalize_formula_text(buf);
     if (formula.empty()) formula = default_channel_formula_text();
-    return compile_formula_rpn(formula, compiled, error);
+    return compile_formula_rpn(formula, compiled, error, g_str == &kEn);
 }
 
 void assign_formula_to_channel(std::size_t channel_index, const std::wstring& formula, const std::vector<FormulaToken>& compiled) {

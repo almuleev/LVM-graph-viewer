@@ -47,6 +47,8 @@ and coding agents working on this repository.
 - `lvm_parser.cpp/.hpp` - file parser and timeline fixes.
 - `analysis.cpp/.hpp` - FFT spectrum and peak helpers.
 - `fft.cpp/.hpp` - FFT implementation.
+- `export_helpers.cpp/.hpp` - export prompt text, filenames, and range helpers.
+- `formula_engine.cpp/.hpp` - formula parsing, normalization, and evaluation helpers.
 - `tests/run_tests.cpp` - regression tests.
 - `lvm_files_for_tests/` - sample measurement input.
 

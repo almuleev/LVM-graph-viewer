@@ -30,7 +30,7 @@
 
 The project includes two front ends built on one shared parsing and analysis core:
 
-- `LVM-graph-viewer-<version>-win-x64.exe` - native desktop viewer for interactive work
+- `LVM-graph-viewer-win-x64.exe` - native desktop viewer for interactive work
 - `Start GUI.bat` - obvious double-click launcher for the GUI in a release folder
 - `lvm_reader.exe` - CLI utility for inspection, FFT and export scenarios
 
@@ -99,6 +99,8 @@ make test
 | Path | Purpose |
 |---|---|
 | `gui_main.cpp` | Win32 desktop viewer |
+| `export_helpers.cpp/.hpp` | Export prompt and tabular export helpers |
+| `formula_engine.cpp/.hpp` | Formula parsing and evaluation helpers |
 | `main.cpp` | CLI entry point |
 | `lvm_parser.cpp/.hpp` | LabVIEW file parser |
 | `analysis.cpp/.hpp` | Spectrum helpers and analysis |

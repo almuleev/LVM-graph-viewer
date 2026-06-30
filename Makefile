@@ -11,16 +11,16 @@ VERSION  := $(shell git describe --tags --abbrev=0 2>/dev/null || echo v0.0.0)
 LIB_SRC  := lvm_parser.cpp fft.cpp analysis.cpp
 APP_SRC  := main.cpp $(LIB_SRC)
 APP_OBJ  := $(APP_SRC:.cpp=.o)
-HDRS     := lvm_parser.hpp fft.hpp analysis.hpp
+HDRS     := lvm_parser.hpp fft.hpp analysis.hpp export_helpers.hpp formula_engine.hpp
 
 ifeq ($(OS),Windows_NT)
     BIN      := $(TARGET).exe
     TEST_BIN := tests/run_tests.exe
-    GUI_BIN  := LVM-graph-viewer-$(VERSION)-win-x64.exe
+    GUI_BIN  := LVM-graph-viewer-win-x64.exe
 else
     BIN      := $(TARGET)
     TEST_BIN := tests/run_tests
-    GUI_BIN  := LVM-graph-viewer-$(VERSION)
+    GUI_BIN  := LVM-graph-viewer
 endif
 
 .PHONY: all clean run test gui
@@ -39,15 +39,15 @@ run: $(BIN)
 test: $(TEST_BIN)
 	./$(TEST_BIN)
 
-$(TEST_BIN): tests/run_tests.cpp $(LIB_SRC) $(HDRS)
-	$(CXX) $(CXXFLAGS) -I. -o $@ tests/run_tests.cpp $(LIB_SRC) $(LDFLAGS)
+$(TEST_BIN): tests/run_tests.cpp $(LIB_SRC) export_helpers.cpp formula_engine.cpp $(HDRS)
+	$(CXX) $(CXXFLAGS) -I. -o $@ tests/run_tests.cpp $(LIB_SRC) export_helpers.cpp formula_engine.cpp $(LDFLAGS)
 
 # Native Win32 GUI viewer (Windows only). Needs -municode for wWinMain and the
 # Win32 import libraries. On Windows you can also run: powershell ./build_gui.ps1
 gui: $(GUI_BIN)
 
 $(GUI_BIN): gui_main.cpp $(LIB_SRC) $(HDRS)
-	$(CXX) $(CXXFLAGS) -DAPP_VERSION_W=L\"$(VERSION)\" -municode -mwindows -o $@ gui_main.cpp $(LIB_SRC) $(LDFLAGS) -lcomdlg32 -lgdi32 -luser32 -lgdiplus -lcomctl32
+	$(CXX) $(CXXFLAGS) -DAPP_VERSION_W=L\"$(VERSION)\" -municode -mwindows -o $@ gui_main.cpp $(LIB_SRC) export_helpers.cpp formula_engine.cpp $(LDFLAGS) -lcomdlg32 -lgdi32 -luser32 -lgdiplus -lcomctl32
 
 clean:
 	rm -f $(APP_OBJ) $(BIN) $(TEST_BIN) $(GUI_BIN)

@@ -10,6 +10,8 @@
 #include <vector>
 
 #include "analysis.hpp"
+#include "export_helpers.hpp"
+#include "formula_engine.hpp"
 #include "lvm_parser.hpp"
 
 namespace {
@@ -294,6 +296,85 @@ void test_missing_file() {
     check(!ds.error.empty(), "error message set");
 }
 
+void test_formula_engine() {
+    std::printf("test_formula_engine\n");
+    std::vector<FormulaToken> rpn;
+    std::wstring error;
+    check(compile_formula_rpn(L"2*x + 3", rpn, error, true), "formula compiles");
+    check(error.empty(), "formula compile error empty");
+    check(!rpn.empty(), "formula rpn not empty");
+    check(!formula_rpn_is_identity(rpn), "non-identity formula detected");
+
+    const AffineFormulaInfo affine = analyze_formula_rpn_affine(rpn);
+    check(affine.valid, "affine formula detected");
+    check_near(affine.mul, 2.0, 1e-12, "affine mul");
+    check_near(affine.add, 3.0, 1e-12, "affine add");
+    check_near(eval_formula_rpn(rpn, 4.0), 11.0, 1e-12, "formula evaluation");
+
+    std::vector<FormulaToken> identity;
+    error.clear();
+    check(compile_formula_rpn(L"x", identity, error, true), "identity formula compiles");
+    check(formula_rpn_is_identity(identity), "identity formula detected");
+}
+
+void test_export_helpers() {
+    std::printf("test_export_helpers\n");
+    check(std::wstring(export_prompt_title_text(true)) == L"Export data", "export title EN");
+    check(export_scope_title_text(ExportDataScope::CurrentView, true) == L"Current view", "current view title");
+    check(export_scope_title_text(ExportDataScope::LoadedFragment, true) == L"Loaded fragment", "fragment title");
+    check(export_scope_title_text(ExportDataScope::RawData, true) == L"Raw data without formulas", "raw title");
+
+    const std::wstring choice = export_scope_choice_text(ExportDataScope::CurrentView, true);
+    check(choice.find(L"Current view") != std::wstring::npos, "choice contains title");
+    check(choice.find(L"\r\n") != std::wstring::npos, "choice contains line break");
+
+    check(export_default_name(L"sample", ExportDataScope::CurrentView, true, false) == L"sample_view_time.csv",
+          "current-view csv name");
+    check(export_default_name(L"sample", ExportDataScope::LoadedFragment, false, true) == L"sample_fragment_freq.txt",
+          "fragment txt name");
+    check(export_default_name(L"sample", ExportDataScope::RawData, true, false) == L"sample_raw_time.csv",
+          "raw csv name");
+
+    const std::vector<double> values = {0.0, 0.1, 0.2, 0.3, 0.4};
+    const auto bounds = export_range_bounds(values, 0.15, 0.35);
+    check(bounds.first == 2 && bounds.second == 4, "export range bounds");
+    check(export_status_prefix(L"CSV", ExportDataScope::CurrentView, true).find(L"Exported CSV") != std::wstring::npos,
+          "status prefix EN");
+    check(std::wstring(export_error_text(true, true)) == L"Failed to export CSV.", "CSV error text EN");
+}
+
+void test_scan_and_window_load() {
+    std::printf("test_scan_and_window_load\n");
+    const std::string content =
+        "***End_of_Header***\n"
+        "0.0\t1.0\t10.0\n"
+        "0.1\t2.0\t20.0\n"
+        "0.2\t3.0\t30.0\n"
+        "0.3\t4.0\t40.0\n"
+        "0.4\t5.0\t50.0\n";
+    const std::string path = write_temp("window.lvm", content);
+
+    double start = 0.0;
+    double end = 0.0;
+    std::string error;
+    check(lvm::scan_time_bounds(path, start, end, error), "scan_time_bounds ok");
+    check(error.empty(), "scan_time_bounds error empty");
+    check_near(start, 0.0, 1e-12, "scan start");
+    check_near(end, 0.4, 1e-12, "scan end");
+
+    lvm::LoadOptions options;
+    options.use_time_window = true;
+    options.time_start = 0.15;
+    options.time_end = 0.35;
+    lvm::Dataset ds = lvm::read_lvm_file(path, options);
+    check(ds.ok, "windowed load ok");
+    check(ds.partial, "windowed load marked partial");
+    check(ds.rows() == 2, "windowed load rows");
+    check_near(ds.time[0], 0.2, 1e-12, "windowed load first time");
+    check_near(ds.time[1], 0.3, 1e-12, "windowed load second time");
+    check(ds.channel_count() == 2, "windowed load channel count");
+}
+
 }  // namespace
 
 int main() {
@@ -310,6 +391,9 @@ int main() {
     test_fft_nyquist_amplitude();
     test_fft_sample_cap_too_small();
     test_missing_file();
+    test_formula_engine();
+    test_export_helpers();
+    test_scan_and_window_load();
 
     std::printf("\n%d checks, %d failure(s)\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
