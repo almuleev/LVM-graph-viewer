@@ -1,14 +1,14 @@
-# LVM Graph Viewer
+# AM Graph Viewer
 
 <p align="center">
-  <img src="docs/assets/github-banner.png" alt="LVM Graph Viewer banner">
+  <img src="docs/assets/github-banner.png" alt="AM Graph Viewer banner">
 </p>
 
 Native Win32 viewer and CLI toolkit for LabVIEW `.lvm` / `.txt` signal files.
 
 ## Why This Project Exists
 
-LabVIEW measurement logs are often easy to produce but inconvenient to inspect quickly outside a LabVIEW environment. `LVM Graph Viewer` focuses on a practical middle ground:
+LabVIEW measurement logs are often easy to produce but inconvenient to inspect quickly outside a LabVIEW environment. `AM Graph Viewer` focuses on a practical middle ground:
 
 - no Qt
 - no external GUI runtime
@@ -68,7 +68,7 @@ The graph previews below are based on the bundled sample input files from [`lvm_
 
 ### Download a ready-to-run build
 
-Use the [latest GitHub release](https://github.com/almuleev/LVM-graph-viewer/releases/latest) and download the Windows executable.
+Use the [latest GitHub release](https://github.com/almuleev/am-graph-viewer/releases/latest) and download the Windows executable.
 
 ### Build the GUI
 
@@ -93,7 +93,7 @@ make test
 - Language: `C++17`
 - GUI stack: `Win32 API + GDI/GDI+`
 - Recommended Windows toolchain: `MSYS2 / MinGW g++`
-- GUI output name follows the current git tag and is built as `LVM-graph-viewer-vX.X.X-win-x64.exe`
+- GUI output name follows the current git tag and is built as `AMGraphViewer-v0.11.0-win-x64.exe`
 
 ## Repository Layout
 

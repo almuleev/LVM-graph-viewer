@@ -1,4 +1,4 @@
-﻿// LVM Viewer вЂ” native Win32 GUI front end.
+﻿// AM Graph Viewer вЂ” native Win32 GUI front end.
 //
 // Self-contained desktop viewer (no external GUI toolkit). Features:
 //   - Main menu bar (Р¤Р°Р№Р» / Р’РёРґ / РР·РјРµСЂРµРЅРёСЏ / Р›РёРЅРёРё / РЎРїСЂР°РІРєР°) + toolbar.
@@ -16,7 +16,7 @@
 //   - Keyboard shortcuts (see РЎРїСЂР°РІРєР° в†’ Р“РѕСЂСЏС‡РёРµ РєР»Р°РІРёС€Рё / F1).
 //
 // Build:
-//   g++ -std=c++17 -O2 -municode -static -mwindows -o LVM-graph-viewer-win-x64.exe
+//   g++ -std=c++17 -O2 -municode -static -mwindows -o AMGraphViewer-v0.11.0-win-x64.exe
 //       gui_main.cpp lvm_parser.cpp fft.cpp analysis.cpp
 //       -lcomdlg32 -lgdi32 -luser32 -lgdiplus -lcomctl32
 #ifndef UNICODE
@@ -59,6 +59,7 @@ using std::min;
 
 #include "analysis.hpp"
 #include "export_helpers.hpp"
+#include "gap_details.hpp"
 #include "formula_engine.hpp"
 #include "lvm_parser.hpp"
 
@@ -299,6 +300,7 @@ HBRUSH g_input_brush = nullptr;
 HBRUSH g_welcome_brush = nullptr;
 HBRUSH g_welcome_hero_brush = nullptr;
 HBRUSH g_welcome_action_brush = nullptr;
+HICON g_program_logo_icon = nullptr;
 std::wstring g_config_path;
 
 struct OwnerDrawMenuEntry {
@@ -387,15 +389,48 @@ void update_theme_brushes() {
     g_welcome_action_brush = CreateSolidBrush(g_theme->btn_bg);
 }
 
-std::wstring app_config_path() {
+std::wstring app_directory_path() {
     wchar_t path[MAX_PATH]{};
     DWORD len = GetModuleFileNameW(nullptr, path, MAX_PATH);
-    std::wstring full = (len > 0) ? std::wstring(path, path + len) : L"LVM Viewer.exe";
+    std::wstring full = (len > 0) ? std::wstring(path, path + len) : L"";
     std::size_t slash = full.find_last_of(L"\\/");
     if (slash != std::wstring::npos) full.resize(slash + 1);
     else full.clear();
+    return full;
+}
+
+std::wstring app_config_path() {
+    std::wstring full = app_directory_path();
     full += L"lvm_viewer.ini";
     return full;
+}
+
+constexpr int IDI_APP_LOGO = 101;
+
+void unload_program_logo() {
+    if (g_program_logo_icon) {
+        DestroyIcon(g_program_logo_icon);
+        g_program_logo_icon = nullptr;
+    }
+}
+
+bool load_program_logo() {
+    unload_program_logo();
+    HINSTANCE self = GetModuleHandleW(nullptr);
+    HICON icon = reinterpret_cast<HICON>(
+        LoadImageW(
+            self,
+            MAKEINTRESOURCEW(IDI_APP_LOGO),
+            IMAGE_ICON,
+            0,
+            0,
+            LR_DEFAULTSIZE | LR_DEFAULTCOLOR));
+    if (!icon) {
+        g_program_logo_icon = nullptr;
+        return false;
+    }
+    g_program_logo_icon = icon;
+    return true;
 }
 
 void load_app_settings() {
@@ -438,6 +473,8 @@ const int IDC_LOADING_CANCEL = 6209;
 
 constexpr UINT WM_APP_ASYNC_SCAN_DONE = WM_APP + 1;
 constexpr UINT WM_APP_ASYNC_LOAD_DONE = WM_APP + 2;
+constexpr UINT_PTR kRuntimeSettingsSaveTimerId = 3;
+constexpr UINT kRuntimeSettingsSaveDelayMs = 750;
 
 // ---- string table --------------------------------------------------------
 struct Strings {
@@ -504,7 +541,7 @@ struct Strings {
 };
 
 static const Strings kRu = {
-    L"LVM Viewer",
+    L"AM Graph Viewer",
     L"Файл", L"Вид", L"Точки", L"Линии", L"Маркеры", L"Справка",
     L"Открыть файл…\tCtrl+O", L"Сохранить PNG…\tCtrl+S", L"Выгрузить CSV…\tCtrl+E", L"Отменить\tCtrl+Z", L"Повторить\tCtrl+Shift+Z", L"Выход\tAlt+F4",
     L"Время / Гц\tM", L"Увеличить\t+", L"Уменьшить\t−", L"Сбросить вид\tHome", L"Автомасштабирование", L"Сглаживание\tC", L"Вертикальное панорамирование\tP", L"Play / Pause\tПробел", L"Тёмная тема\tT", L"Скорость",
@@ -520,13 +557,13 @@ static const Strings kRu = {
     L"X=%.5g", L"Δx=%.5g", L"Δy=%.5g", L"1/Δt=%.5g Гц", L"d=%.5g",
     L"Примагничивать маркеры к графику",
     L"Настройки точек измерения",
-    L"Горячие клавиши — LVM Viewer", L"О программе — LVM Viewer",
+    L"Горячие клавиши — AM Graph Viewer", L"О программе — AM Graph Viewer",
     L"Нет данных", L"Сначала откройте файл.", L"Не удалось сохранить PNG.", L"Не удалось выгрузить CSV.", L"Ошибка чтения",
-    L"LVM Viewer", L"Просмотрщик сигналов LabVIEW (.lvm / .txt)",
+    L"AM Graph Viewer", L"Просмотрщик сигналов LabVIEW (.lvm / .txt)",
     L"РљР°Рє СЂР°Р±РѕС‚Р°С‚СЊ СЃ РїСЂРёР»РѕР¶РµРЅРёРµРј:\r   вЂў  В«РћС‚РєСЂС‹С‚СЊ С„Р°Р№Р»В» (O) вЂ” Р·Р°РіСЂСѓР·РёС‚Рµ .lvm РёР»Рё .txt.\r   вЂў  В«Р’СЂРµРјСЏ / Р“С†В» (M) вЂ” РіСЂР°С„РёРє СЃРёРіРЅР°Р»Р° РёР»Рё РµРіРѕ СЃРїРµРєС‚СЂ (Р‘РџР¤).\r   вЂў  В«РР·РјРµСЂРµРЅРёРµВ» (V) вЂ” РєР»РёРєР°Р№С‚Рµ С‚РѕС‡РєРё РЅР° РіСЂР°С„РёРєРµ. Р§С‚Рѕ РїРѕРєР°Р·С‹РІР°С‚СЊ\r       Сѓ С‚РѕС‡РµРє Рё РїСЂРёРјР°РіРЅРёС‡РёРІР°РЅРёРµ вЂ” РІ РѕРєРЅРµ В«РќР°СЃС‚СЂРѕР№РєРё С‚РѕС‡РµРєВ».\r   вЂў  РљРѕР»РµСЃРѕ РјС‹С€Рё вЂ” РјР°СЃС€С‚Р°Р±, С‚СЏРіР° Р›РљРњ вЂ” РїСЂРѕРєСЂСѓС‚РєР° РїРѕ РІСЂРµРјРµРЅРё.\r   вЂў  В«Р¤РёРєСЃ. YВ» вЂ” Р·Р°С„РёРєСЃРёСЂРѕРІР°С‚СЊ РјР°СЃС€С‚Р°Р± РїРѕ РІС‹СЃРѕС‚Рµ.\r   вЂў  РџСЂРѕР±РµР» вЂ” РІРѕСЃРїСЂРѕРёР·РІРµРґРµРЅРёРµ РІ СЂРµР°Р»СЊРЅРѕРј РІСЂРµРјРµРЅРё (1 СЃ = 1 СЃ).\r   вЂў  F1 вЂ” РїРѕР»РЅС‹Р№ СЃРїРёСЃРѕРє РіРѕСЂСЏС‡РёС… РєР»Р°РІРёС€.",
     L"Открыть файл", L"Настройки точек…", L"Горячие клавиши", L"Начать работу",
     L"Файлы\n  O / Ctrl+O\t— Открыть\n  S / Ctrl+S\t— PNG\n  E / Ctrl+E\t— CSV\n  Ctrl+Z\t— Отменить\n  Ctrl+Shift+Z\t— Повторить\n\nВид\n  M\t— Время/Гц\n  C\t— Сглаживание\n  + / ↑\t— Увеличить\n  − / ↓\t— Уменьшить\n  ← / →\t— Сдвиг влево/вправо\n  Home\t— Сброс\n  Ctrl+Home\t— В начало\n  Ctrl+End\t— В конец\n  Пробел\t— Play / Pause\n\nЛинии и маркеры\n  L\t— Вертикальная линия\n  H\t— Горизонтальная линия\n  K\t— Маркер\n  Esc\t— Отменить добавление\n\nТочки\n  V\t— Режим точек вкл/выкл\n  Delete\t— Очистить точки\n\nМышь\n  Колесо\t— Масштаб под курсором\n  Shift+колесо\t— Прокрутка влево/вправо\n  Ctrl+колесо\t— Масштаб по высоте (Y)\n  Alt+колесо\t— Сдвиг вверх/вниз (Y)\n  ЛКМ + тяга\t— Панорамирование (вкл/выкл вертикальное через Вид)\n  ЛКМ\t— Поставить точку / линию / маркер (в режиме)\n  ПКМ\t— Очистить точки\n\n  F1\t— Эта справка",
-    L"LVM Viewer — просмотрщик сигналов LabVIEW (.lvm / .txt)\n\nНативное приложение Win32 + GDI/GDI+, без внешних\nзависимостей и без Qt. Время и спектр (БПФ), измерения\nс примагничиванием, направляющие линии, визуальное\nсглаживание, экспорт PNG/CSV.\n\nСборка: build_gui.ps1 (MinGW g++) или make gui.",
+    L"AM Graph Viewer — просмотрщик сигналов LabVIEW (.lvm / .txt)\n\nНативное приложение Win32 + GDI/GDI+, без внешних\nзависимостей и без Qt. Время и спектр (БПФ), измерения\nс примагничиванием, направляющие линии, визуальное\nсглаживание, экспорт PNG/CSV.\n\nСборка: build_gui.ps1 (MinGW g++) или make gui.",
     L"Открыть файл…", L"PNG", L"CSV", L"Переключить Время / Гц", L"Воспроизведение", L"Пауза", L"Режим измерения точек", L"Сбросить вид", L"Автомасштабирование", L"Настройки точек",
     L"Русский", L"English", L"Язык",
     L"Лёгкий режим",
@@ -566,7 +603,7 @@ static const Strings kRu = {
 };
 
 static const Strings kEn = {
-    L"LVM Viewer",
+    L"AM Graph Viewer",
     L"File", L"View", L"Points", L"Lines", L"Markers", L"Help",
     L"Open file…\tCtrl+O", L"Save PNG…\tCtrl+S", L"Export CSV…\tCtrl+E", L"Undo\tCtrl+Z", L"Redo\tCtrl+Shift+Z", L"Exit\tAlt+F4",
     L"Time / Hz\tM", L"Zoom in\t+", L"Zoom out\t−", L"Reset view\tHome", L"Auto zoom", L"Smoothing\tC", L"Vertical pan\tP", L"Play / Pause\tSpace", L"Dark theme\tT", L"Speed",
@@ -582,13 +619,13 @@ static const Strings kEn = {
     L"X=%.5g", L"Δx=%.5g", L"Δy=%.5g", L"1/Δt=%.5g Hz", L"d=%.5g",
     L"Snap markers to graph",
     L"Measurement point settings",
-    L"Keyboard shortcuts — LVM Viewer", L"About — LVM Viewer",
+    L"Keyboard shortcuts — AM Graph Viewer", L"About — AM Graph Viewer",
     L"No data", L"Open a file first.", L"Failed to save PNG.", L"Failed to export CSV.", L"Read error",
-    L"LVM Viewer", L"LabVIEW signal viewer (.lvm / .txt)",
+    L"AM Graph Viewer", L"LabVIEW signal viewer (.lvm / .txt)",
     L"How to use the app:\r   •  «Open file» (O) — load a .lvm or .txt.\r   •  «Time / Hz» (M) — signal plot or its FFT spectrum.\r   •  «Measure» (V) — click points on the plot. What to show\r       at points and snapping — in the «Point settings» window.\r   •  Mouse wheel — zoom, left-drag — pan.\r   •  «Lock Y» — freeze the vertical scale.\r   •  Space — real-time playback (1 s = 1 s).\r   •  F1 — full list of keyboard shortcuts.",
     L"Open file", L"Point settings…", L"Keyboard shortcuts", L"Start working",
     L"Files\n  O / Ctrl+O\t— Open\n  S / Ctrl+S\t— PNG\n  E / Ctrl+E\t— CSV\n  Ctrl+Z\t— Undo\n  Ctrl+Shift+Z\t— Redo\n\nView\n  M\t— Time / Hz\n  C\t— Smoothing\n  + / ↑\t— Zoom in\n  − / ↓\t— Zoom out\n  ← / →\t— Pan left / right\n  Home\t— Reset view\n  Ctrl+Home\t— Go to start\n  Ctrl+End\t— Go to end\n  Space\t— Play / Pause\n\nLines and markers\n  L\t— Vertical line\n  H\t— Horizontal line\n  K\t— Marker\n  Esc\t— Cancel adding\n\nPoints\n  V\t— Measure mode on/off\n  Delete\t— Clear points\n\nMouse\n  Wheel\t— Zoom under cursor\n  Shift+wheel\t— Pan left / right\n  Ctrl+wheel\t— Zoom Y\n  Alt+wheel\t— Pan up/down (Y)\n  Left-drag\t— Pan (toggle vertical via View)\n  Left-click\t— Drop point / line / marker (in mode)\n  Right-click\t— Clear points\n\n  F1\t— This help",
-    L"LVM Viewer — LabVIEW signal viewer (.lvm / .txt)\n\nNative Win32 + GDI/GDI+ application, no external\ndependencies, no Qt. Time and spectrum (FFT), measurements\nwith snapping, guide lines, visual smoothing, PNG/CSV export.\n\nBuild: build_gui.ps1 (MinGW g++) or make gui.",
+    L"AM Graph Viewer — LabVIEW signal viewer (.lvm / .txt)\n\nNative Win32 + GDI/GDI+ application, no external\ndependencies, no Qt. Time and spectrum (FFT), measurements\nwith snapping, guide lines, visual smoothing, PNG/CSV export.\n\nBuild: build_gui.ps1 (MinGW g++) or make gui.",
     L"Open file…", L"PNG", L"CSV", L"Toggle Time / Hz", L"Playback", L"Pause", L"Measurement point mode", L"Reset view", L"Auto zoom", L"Point settings",
     L"Русский", L"English", L"Language",
     L"Light mode",
@@ -770,6 +807,11 @@ struct App {
     int active_marker = -1;
     bool light_mode = false;
     bool show_gap_markers = true;
+    bool gap_details_visible = false;
+    double gap_details_duration = 0.0;
+    long long gap_details_missing_samples = 0;
+    double gap_details_reference_step = 0.0;
+    bool runtime_settings_save_pending = false;
     bool current_file_partial = false;
     double light_mode_open_start = 0.0;
     double light_mode_open_end = 10.0;
@@ -986,10 +1028,12 @@ void set_toggle_checked(HWND hwnd, bool checked);
 void toggle_checked_state(HWND hwnd);
 std::wstring channel_display_label(std::size_t ci);
 std::wstring normalize_axis_label_text(const std::wstring& text, const wchar_t* fallback);
-std::wstring time_gap_details_text(double duration, long long estimated_missing_samples);
-const wchar_t* time_gap_details_title();
 int hit_test_gap_marker(int x, int y);
-void show_gap_details_dialog(HWND owner, int gap_index);
+void hide_gap_details_card();
+void show_gap_details_card(double duration, long long estimated_missing_samples);
+void draw_gap_details_card(HDC dc, const RECT& plot);
+void flush_runtime_settings_save();
+void save_runtime_settings_now();
 
 const wchar_t* gap_markers_toggle_text() {
     return (g_str == &kEn) ? L"Show gap markers" : L"Показывать разрывы";
@@ -4113,6 +4157,7 @@ void apply_loaded_dataset(lvm::Dataset ds, const std::wstring& wpath, bool hide_
     g.spec_source_from_selection = false;
     g_undo.clear();
     g_redo.clear();
+    hide_gap_details_card();
     stop_play();
     g.playhead = g.data_t0;
     g.playhead_active = false;
@@ -5039,8 +5084,7 @@ void draw_time(HDC dc, const RECT& p) {
 
             long long estimated_missing_samples = 0;
             if (gap_step > 0.0) {
-                estimated_missing_samples = static_cast<long long>(std::llround(dt / gap_step)) - 1;
-                if (estimated_missing_samples < 0) estimated_missing_samples = 0;
+                estimated_missing_samples = gap_estimated_missing_samples(dt, gap_step);
             }
 
             gap_annotations.push_back(TimeGapAnnotation{
@@ -5704,7 +5748,9 @@ void on_paint(HDC hdc) {
 
     SelectObject(mem, g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT)));
 
-    draw_chart(mem, plot_rect());
+    const RECT plot = plot_rect();
+    draw_chart(mem, plot);
+    draw_gap_details_card(mem, plot);
 
     // Status bar (owner-drawn)
     RECT sb = {0, ch - kBottomBar, cw, ch};
@@ -6535,7 +6581,7 @@ void load_runtime_settings() {
     }
 }
 
-void save_runtime_settings() {
+void save_runtime_settings_now() {
     if (g_config_path.empty()) g_config_path = app_config_path();
     ensure_channel_formulas_loaded();
 
@@ -6581,6 +6627,24 @@ void save_runtime_settings() {
         swprintf(value, 64, L"%u,%u", static_cast<unsigned int>(hk.fvirt), static_cast<unsigned int>(hk.key));
         WritePrivateProfileStringW(L"hotkeys", key_name, value, g_config_path.c_str());
     }
+    g.runtime_settings_save_pending = false;
+}
+
+void flush_runtime_settings_save() {
+    if (g.main && IsWindow(g.main)) {
+        KillTimer(g.main, kRuntimeSettingsSaveTimerId);
+    }
+    if (!g.runtime_settings_save_pending) return;
+    g.runtime_settings_save_pending = false;
+    save_runtime_settings_now();
+}
+
+// Debounced save request for runtime settings; the actual disk write happens later.
+void save_runtime_settings() {
+    g.runtime_settings_save_pending = true;
+    if (!g.main || !IsWindow(g.main)) return;
+    KillTimer(g.main, kRuntimeSettingsSaveTimerId);
+    SetTimer(g.main, kRuntimeSettingsSaveTimerId, kRuntimeSettingsSaveDelayMs, nullptr);
 }
 
 std::wstring key_name(WORD key) {
@@ -7063,22 +7127,6 @@ std::wstring toolbar_hover_text(HWND btn) {
     return L"";
 }
 
-std::wstring time_gap_details_text(double duration, long long estimated_missing_samples) {
-    wchar_t buf[192]{};
-    if (estimated_missing_samples <= 0) {
-        if (g_str == &kEn) swprintf(buf, 192, L"Gap duration: %.6g s", duration);
-        else swprintf(buf, 192, L"Длительность разрыва: %.6g c", duration);
-    } else {
-        if (g_str == &kEn) swprintf(buf, 192, L"Gap duration: %.6g s\nApprox. missing samples: ~%lld", duration, estimated_missing_samples);
-        else swprintf(buf, 192, L"Длительность разрыва: %.6g c\nПропущено примерно: ~%lld отсч.", duration, estimated_missing_samples);
-    }
-    return buf;
-}
-
-const wchar_t* time_gap_details_title() {
-    return (g_str == &kEn) ? L"Gap details" : L"Информация о разрыве";
-}
-
 int hit_test_gap_marker(int x, int y) {
     POINT pt{ x, y };
     for (int i = static_cast<int>(g.visible_gap_markers.size()) - 1; i >= 0; --i) {
@@ -7087,11 +7135,108 @@ int hit_test_gap_marker(int x, int y) {
     return -1;
 }
 
-void show_gap_details_dialog(HWND owner, int gap_index) {
-    if (gap_index < 0 || gap_index >= static_cast<int>(g.visible_gap_markers.size())) return;
-    const auto& gap = g.visible_gap_markers[static_cast<std::size_t>(gap_index)];
-    const std::wstring text = time_gap_details_text(gap.duration, gap.estimated_missing_samples);
-    MessageBoxW(owner, text.c_str(), time_gap_details_title(), MB_OK | MB_ICONINFORMATION);
+void hide_gap_details_card() {
+    if (!g.gap_details_visible &&
+        g.gap_details_duration == 0.0 &&
+        g.gap_details_missing_samples == 0 &&
+        g.gap_details_reference_step == 0.0) {
+        return;
+    }
+    g.gap_details_visible = false;
+    g.gap_details_duration = 0.0;
+    g.gap_details_missing_samples = 0;
+    g.gap_details_reference_step = 0.0;
+    if (g.main && IsWindow(g.main)) InvalidateRect(g.main, nullptr, FALSE);
+}
+
+void show_gap_details_card(double duration, long long estimated_missing_samples) {
+    g.gap_details_visible = true;
+    g.gap_details_duration = duration;
+    g.gap_details_missing_samples = estimated_missing_samples;
+    g.gap_details_reference_step = gap_reference_step_from_estimate(duration, estimated_missing_samples);
+    if (g.main && IsWindow(g.main)) InvalidateRect(g.main, nullptr, FALSE);
+}
+
+void draw_gap_details_card(HDC dc, const RECT& plot) {
+    if (!g.gap_details_visible || !has_data() || !g.show_gap_markers || g.freq_mode) return;
+
+    const int margin = 12;
+    const int pad = 14;
+    const int available_w = plot.right - plot.left - margin * 2;
+    const int available_h = plot.bottom - plot.top - margin * 2;
+    if (available_w < 220 || available_h < 120) return;
+
+    int card_w = available_w > 420 ? 420 : available_w;
+    if (card_w < 260) card_w = available_w;
+    if (card_w < 220) card_w = 220;
+
+    const std::wstring title = gap_details_title_text(g_str == &kEn);
+    const std::wstring body = gap_details_body_text(
+        g_str == &kEn,
+        g.gap_details_duration,
+        g.gap_details_missing_samples,
+        g.gap_details_reference_step);
+
+    RECT title_rc = {0, 0, card_w - pad * 2, 0};
+    RECT body_rc = {0, 0, card_w - pad * 2, 0};
+    HFONT body_font = g.ui_font ? g.ui_font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+    HFONT title_font = g.bold_font ? g.bold_font : body_font;
+    HGDIOBJ old_font = SelectObject(dc, title_font);
+    DrawTextW(dc, title.c_str(), -1, &title_rc, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
+    SelectObject(dc, body_font);
+    DrawTextW(dc, body.c_str(), -1, &body_rc, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+    SelectObject(dc, old_font);
+
+    const int title_h = title_rc.bottom - title_rc.top;
+    const int body_h = body_rc.bottom - body_rc.top;
+    const int card_h = pad * 2 + title_h + 10 + body_h;
+    if (card_h >= available_h) return;
+
+    RECT card = {
+        plot.right - margin - card_w,
+        plot.top + margin,
+        plot.right - margin,
+        plot.top + margin + card_h
+    };
+    if (card.left < plot.left + margin) {
+        card.left = plot.left + margin;
+        card.right = card.left + card_w;
+    }
+    if (card.bottom > plot.bottom - margin) {
+        card.bottom = plot.bottom - margin;
+        card.top = card.bottom - card_h;
+    }
+
+    const COLORREF gap_orange = RGB(245, 140, 32);
+    const COLORREF gap_fill = mix_color(g_theme->bg_panel, gap_orange, (g_theme == &kDarkTheme) ? 24 : 18);
+    const COLORREF gap_border = mix_color(g_theme->separator, gap_orange, (g_theme == &kDarkTheme) ? 110 : 96);
+    fill_rounded_rect(dc, card, gap_fill, gap_border, 14);
+
+    RECT text = card;
+    InflateRect(&text, -pad, -pad);
+    SetBkMode(dc, TRANSPARENT);
+
+    RECT title_rect = text;
+    title_rect.bottom = title_rect.top + title_h;
+    SelectObject(dc, title_font);
+    SetTextColor(dc, gap_orange);
+    DrawTextW(dc, title.c_str(), -1, &title_rect, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+
+    HPEN sep = CreatePen(PS_SOLID, 1, mix_color(g_theme->separator, gap_orange, 72));
+    HGDIOBJ old_pen = SelectObject(dc, sep);
+    const int line_y = title_rect.bottom + 5;
+    MoveToEx(dc, text.left, line_y, nullptr);
+    LineTo(dc, text.right, line_y);
+    SelectObject(dc, old_pen);
+    DeleteObject(sep);
+
+    RECT body_rect = text;
+    body_rect.top = line_y + 7;
+    SelectObject(dc, body_font);
+    SetTextColor(dc, g_theme->text_primary);
+    DrawTextW(dc, body.c_str(), -1, &body_rect, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
+
+    SelectObject(dc, old_font);
 }
 
 void append_menu_popup_owner_draw(HMENU bar, HMENU popup, const std::wstring& text) {
@@ -7804,7 +7949,10 @@ void sync_menu() {
 void set_mode(bool freq_mode) {
     if (g.freq_mode == freq_mode) return;
     g.freq_mode = freq_mode;
-    if (g.freq_mode) stop_play();
+    if (g.freq_mode) {
+        stop_play();
+        hide_gap_details_card();
+    }
     if (g.freq_mode) {
         compute_spectrum_from_current_source();
         g.freq_start = 0.0;
@@ -8354,6 +8502,7 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     if (HIWORD(wp) == BN_CLICKED || HIWORD(wp) == BN_DOUBLECLICKED) {
                         toggle_checked_state(ctl);
                         g.show_gap_markers = checked();
+                        if (!g.show_gap_markers) hide_gap_details_card();
                         invalidate_plot_analysis_cache();
                         save_runtime_settings();
                         InvalidateRect(g.main, nullptr, FALSE);
@@ -8584,6 +8733,10 @@ LRESULT CALLBACK WelcomeProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             mkbtn(settings_button_text(), IDC_PTSETTINGS);
             mkbtn(g_str->welcome_btn_hotkeys, IDM_HOTKEYS);
             mkbtn(g_str->welcome_btn_start, IDW_START);
+            if (g_program_logo_icon) {
+                SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(g_program_logo_icon));
+                SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(g_program_logo_icon));
+            }
             layout_welcome_controls(hwnd);
             enable_file_drop_support(hwnd);
             return 0;
@@ -9107,6 +9260,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return TRUE;
         }
         case WM_TIMER:
+            if (LOWORD(wp) == kRuntimeSettingsSaveTimerId) {
+                flush_runtime_settings_save();
+                return 0;
+            }
             if (LOWORD(wp) == 2) {
                 POINT pt;
                 GetCursorPos(&pt);
@@ -9698,6 +9855,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             break;
         }
         case WM_MOUSEWHEEL: {
+            if (g.gap_details_visible) {
+                hide_gap_details_card();
+            }
             POINT pt = {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
             ScreenToClient(hwnd, &pt);
             if (side_panel_hit_test(pt) && g.side_scroll_max > 0) {
@@ -9747,6 +9907,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case WM_LBUTTONDOWN: {
             finish_channel_rename_if_click_outside(hwnd);
+            if (g.gap_details_visible) {
+                hide_gap_details_card();
+            }
             const int mx = GET_X_LPARAM(lp), my = GET_Y_LPARAM(lp);
             const RECT p = plot_rect();
             if (!has_data()) {
@@ -9928,6 +10091,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         case WM_RBUTTONDOWN:
+            if (g.gap_details_visible) {
+                hide_gap_details_card();
+            }
             if (has_fft_window()) {
                 clear_fft_window();
                 set_status();
@@ -10031,7 +10197,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 if (!g.freq_mode && g.show_gap_markers) {
                     const int released_gap_index = hit_test_gap_marker(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
                     if (released_gap_index >= 0 && released_gap_index == pending_gap_index) {
-                        show_gap_details_dialog(hwnd, released_gap_index);
+                        const auto& gap = g.visible_gap_markers[static_cast<std::size_t>(released_gap_index)];
+                        show_gap_details_card(gap.duration, gap.estimated_missing_samples);
                     }
                 }
                 return 0;
@@ -10039,7 +10206,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (g.dragging) { g.dragging = false; ReleaseCapture(); }
             return 0;
         case WM_KEYDOWN:
+            if (g.gap_details_visible && wp != VK_ESCAPE) {
+                hide_gap_details_card();
+            }
             if (wp == VK_ESCAPE) {
+                if (g.gap_details_visible) {
+                    hide_gap_details_card();
+                    return 0;
+                }
                 if (g.pending_line || g.pending_marker) {
                     g.pending_line = 0;
                     g.pending_marker = false;
@@ -10129,9 +10303,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_DESTROY:
             request_async_load_cancel();
             hide_loading();
-            save_runtime_settings();
+            flush_runtime_settings_save();
             save_app_settings();
             stop_play();
+            KillTimer(hwnd, kRuntimeSettingsSaveTimerId);
             KillTimer(hwnd, 2);
             release_backbuffer();
             if (g.ui_font && g.ui_font != reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT)))
@@ -10197,6 +10372,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int show) {
     InitCommonControlsEx(&icc);
     load_app_settings();
     load_runtime_settings();
+    load_program_logo();
+    HICON class_icon = g_program_logo_icon ? g_program_logo_icon : LoadIcon(nullptr, IDI_APPLICATION);
 
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(wc);
@@ -10205,7 +10382,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int show) {
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wc.hbrBackground = nullptr;
     wc.lpszClassName = L"LvmViewerWnd";
-    wc.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
+    wc.hIcon = class_icon;
+    wc.hIconSm = class_icon;
     RegisterClassExW(&wc);
 
     // Settings panel + welcome screen window classes.
@@ -10216,6 +10394,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int show) {
     sc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     sc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     sc.lpszClassName = L"LvmPtSettings";
+    sc.hIcon = class_icon;
+    sc.hIconSm = class_icon;
     RegisterClassExW(&sc);
 
     WNDCLASSEXW wcw = {};
@@ -10225,13 +10405,19 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int show) {
     wcw.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wcw.hbrBackground = nullptr;
     wcw.lpszClassName = L"LvmWelcome";
-    wcw.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
+    wcw.hIcon = class_icon;
+    wcw.hIconSm = class_icon;
     RegisterClassExW(&wcw);
 
     g.main = CreateWindowExW(0, wc.lpszClassName, g_str->app_title,
                              WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT, 1180, 720,
                              nullptr, nullptr, inst, nullptr);
     if (!g.main) return 1;
+    SendMessageW(g.main, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(class_icon));
+    SendMessageW(g.main, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(class_icon));
+    if (g.runtime_settings_save_pending) {
+        save_runtime_settings();
+    }
 
     ShowWindow(g.main, show);
     UpdateWindow(g.main);
@@ -10256,6 +10442,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int show) {
         }
     }
     if (g.accel) DestroyAcceleratorTable(g.accel);
+    unload_program_logo();
     Gdiplus::GdiplusShutdown(g_gdiplus_token);
     return 0;
 }
+

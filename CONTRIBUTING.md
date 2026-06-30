@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in improving `LVM Graph Viewer`.
+Thanks for your interest in improving `AM Graph Viewer`.
 
 ## Before You Start
 

@@ -1,5 +1,5 @@
 param(
-    [string]$OutputDir = "dist\LVM-graph-viewer",
+    [string]$OutputDir = "dist\AMGraphViewer",
     [switch]$Zip
 )
 
@@ -9,14 +9,15 @@ Set-Location $PSScriptRoot
 
 $version = git describe --tags --abbrev=0 2>$null
 if (-not $version) { $version = "v0.0.0" }
-$guiExe = "LVM-graph-viewer-$version-win-x64.exe"
-$zipName = "LVM-graph-viewer-$version-win-x64.zip"
+$guiExe = "AMGraphViewer-$version-win-x64.exe"
+$zipName = "AMGraphViewer-$version-win-x64.zip"
 
 $files = @(
     $guiExe,
     "lvm_reader.exe",
     "Start GUI.bat",
     "run.bat",
+    "AM_logo.ico",
     "README.md",
     "README_EN.md",
     "README_RU.md",

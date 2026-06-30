@@ -5,12 +5,12 @@ and coding agents working on this repository.
 
 ## Project Summary
 
-- `LVM Graph Viewer` is a C++17 application for LabVIEW `.lvm` / `.txt` signal
+- `AM Graph Viewer` is a C++17 application for LabVIEW `.lvm` / `.txt` signal
   files.
 - It has two front ends that share the same parsing and analysis core:
   - `lvm_reader.exe`: CLI tool for inspection, stats, FFT, selection, and CSV
     export.
-  - `LVM-graph-viewer-vX.X.X-win-x64.exe`: native Win32 GUI viewer.
+  - `AMGraphViewer-vX.X.X-win-x64.exe`: native Win32 GUI viewer.
 - `Start GUI.bat`: obvious double-click launcher for the GUI in a release
   folder.
 - `run.bat`: CLI helper that launches `lvm_reader.exe`.

@@ -11,6 +11,7 @@
 
 #include "analysis.hpp"
 #include "export_helpers.hpp"
+#include "gap_details.hpp"
 #include "formula_engine.hpp"
 #include "lvm_parser.hpp"
 
@@ -343,6 +344,24 @@ void test_export_helpers() {
     check(std::wstring(export_error_text(true, true)) == L"Failed to export CSV.", "CSV error text EN");
 }
 
+void test_gap_details() {
+    std::printf("test_gap_details\n");
+    check(std::wstring(gap_details_title_text(true)) == L"Gap details", "gap title EN");
+    check(std::wstring(gap_details_title_text(false)) == L"Информация о разрыве", "gap title RU");
+    check(gap_estimated_missing_samples(0.131, 0.03275) == 3, "gap estimate formula");
+    check_near(gap_reference_step_from_estimate(0.131, 3), 0.03275, 1e-12, "gap reference step");
+
+    const std::wstring en = gap_details_body_text(true, 0.131, 3, 0.03275);
+    check(en.find(L"Gap duration: 0.131 s") != std::wstring::npos, "gap body EN duration");
+    check(en.find(L"Approx. missing samples: ~3") != std::wstring::npos, "gap body EN samples");
+    check(en.find(L"Reference step: 0.03275 s") != std::wstring::npos, "gap body EN step");
+
+    const std::wstring ru = gap_details_body_text(false, 0.131, 3, 0.03275);
+    check(ru.find(L"Длительность разрыва: 0.131 c") != std::wstring::npos, "gap body RU duration");
+    check(ru.find(L"Пропущено примерно: ~3 отсч.") != std::wstring::npos, "gap body RU samples");
+    check(ru.find(L"Типичный шаг: 0.03275 c") != std::wstring::npos, "gap body RU step");
+}
+
 void test_scan_and_window_load() {
     std::printf("test_scan_and_window_load\n");
     const std::string content =
@@ -393,6 +412,7 @@ int main() {
     test_missing_file();
     test_formula_engine();
     test_export_helpers();
+    test_gap_details();
     test_scan_and_window_load();
 
     std::printf("\n%d checks, %d failure(s)\n", g_checks, g_failures);

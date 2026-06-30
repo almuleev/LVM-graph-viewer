@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.11.0
+
+- Ребрендинг проекта: основное имя приложения изменено на `AM Graph Viewer`, а release-файл теперь называется `AMGraphViewer-v0.11.0-win-x64.exe`.
+- Rebranded the project so the main app name is now `AM Graph Viewer`, and the release artifact is now `AMGraphViewer-v0.11.0-win-x64.exe`.
+- Обновлены build/release-скрипты, ссылки в документации и пользовательские заголовки.
+- Updated the build/release scripts, documentation links, and user-facing window titles.
+
 ## v0.10.7
 
 - Исправлены подписи в верхнем меню: пункты общих настроек, горячих клавиш, линий и вертикального панорамирования больше не обрезаются.
