@@ -5,7 +5,7 @@ cd /d "%~dp0"
 title LVM Graph Viewer CLI
 
 echo This is the command-line analyzer.
-echo For the graphical viewer, launch "Start GUI.bat" or "LVM-graph-viewer-win-x64.exe".
+echo For the graphical viewer, launch "Start GUI.bat" or "LVM-graph-viewer-vX.X.X-win-x64.exe".
 echo.
 
 set "EXE=%~dp0lvm_reader.exe"

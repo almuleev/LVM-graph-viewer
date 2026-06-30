@@ -93,7 +93,7 @@ make test
 - Язык: `C++17`
 - GUI-стек: `Win32 API + GDI/GDI+`
 - Рекомендуемый toolchain под Windows: `MSYS2 / MinGW g++`
-- Имя GUI-бинарника фиксировано как `LVM-graph-viewer-win-x64.exe` через `build_gui.ps1`
+- Имя GUI-бинарника берётся из текущего git-тега и собирается как `LVM-graph-viewer-vX.X.X-win-x64.exe`
 
 ## Структура репозитория
 

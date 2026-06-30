@@ -16,11 +16,11 @@ HDRS     := lvm_parser.hpp fft.hpp analysis.hpp export_helpers.hpp formula_engin
 ifeq ($(OS),Windows_NT)
     BIN      := $(TARGET).exe
     TEST_BIN := tests/run_tests.exe
-    GUI_BIN  := LVM-graph-viewer-win-x64.exe
+    GUI_BIN  := LVM-graph-viewer-$(VERSION)-win-x64.exe
 else
     BIN      := $(TARGET)
     TEST_BIN := tests/run_tests
-    GUI_BIN  := LVM-graph-viewer
+    GUI_BIN  := LVM-graph-viewer-$(VERSION)
 endif
 
 .PHONY: all clean run test gui

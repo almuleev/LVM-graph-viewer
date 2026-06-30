@@ -93,7 +93,7 @@ make test
 - Language: `C++17`
 - GUI stack: `Win32 API + GDI/GDI+`
 - Recommended Windows toolchain: `MSYS2 / MinGW g++`
-- GUI output name is fixed to `LVM-graph-viewer-win-x64.exe` through `build_gui.ps1`
+- GUI output name follows the current git tag and is built as `LVM-graph-viewer-vX.X.X-win-x64.exe`
 
 ## Repository Layout
 

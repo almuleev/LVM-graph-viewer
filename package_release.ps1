@@ -7,8 +7,13 @@ $ErrorActionPreference = "Stop"
 
 Set-Location $PSScriptRoot
 
+$version = git describe --tags --abbrev=0 2>$null
+if (-not $version) { $version = "v0.0.0" }
+$guiExe = "LVM-graph-viewer-$version-win-x64.exe"
+$zipName = "LVM-graph-viewer-$version-win-x64.zip"
+
 $files = @(
-    "LVM-graph-viewer-win-x64.exe",
+    $guiExe,
     "lvm_reader.exe",
     "Start GUI.bat",
     "run.bat",
@@ -34,7 +39,7 @@ foreach ($file in $files) {
 }
 
 if ($Zip) {
-    $zipPath = Join-Path (Split-Path $OutputDir -Parent) "LVM-graph-viewer-win-x64.zip"
+    $zipPath = Join-Path (Split-Path $OutputDir -Parent) $zipName
     if (Test-Path -LiteralPath $zipPath) {
         Remove-Item -LiteralPath $zipPath -Force
     }

@@ -1,4 +1,4 @@
-# Build the native Win32 GUI viewer (LVM-graph-viewer-win-x64.exe) with MSYS2/MinGW g++.
+# Build the native Win32 GUI viewer (LVM-graph-viewer-vX.X.X-win-x64.exe) with MSYS2/MinGW g++.
 # Usage (from this folder):  powershell -ExecutionPolicy Bypass -File build_gui.ps1
 $ErrorActionPreference = "Stop"
 
@@ -13,7 +13,7 @@ Set-Location $PSScriptRoot
 $version = git describe --tags --abbrev=0 2>$null
 if (-not $version) { $version = "v0.0.0" }
 
-$outName = "LVM-graph-viewer-win-x64.exe"
+$outName = "LVM-graph-viewer-$version-win-x64.exe"
 $versionDefine = '-DAPP_VERSION_W=L\"' + $version + '\"'
 
 $flags = @(
