@@ -2740,6 +2740,28 @@ void populate_filter_topology_combo(HWND combo) {
     SendMessageW(combo, CB_SETDROPPEDWIDTH, 220, 0);
 }
 
+void expand_filter_combo_dropdown(HWND combo) {
+    if (!combo) return;
+    COMBOBOXINFO cbi{};
+    cbi.cbSize = sizeof(cbi);
+    if (!GetComboBoxInfo(combo, &cbi) || !cbi.hwndList) return;
+
+    RECT list_rc{};
+    if (!GetWindowRect(cbi.hwndList, &list_rc)) return;
+
+    int item_h = static_cast<int>(SendMessageW(combo, CB_GETITEMHEIGHT, 0, 0));
+    if (item_h <= 0) item_h = 20;
+    const int item_count = max(1, static_cast<int>(SendMessageW(combo, CB_GETCOUNT, 0, 0)));
+    const int visible_items = min(item_count, 4);
+    const int desired_h = max(item_h * visible_items + 4, item_h + 4);
+    const int desired_w = max(static_cast<int>(list_rc.right - list_rc.left), 220);
+
+    SetWindowPos(cbi.hwndList, HWND_TOP,
+                 list_rc.left, list_rc.top,
+                 desired_w, desired_h,
+                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+}
+
 void sync_filter_controls_from_state() {
     const double nyquist = current_filter_nyquist();
     const bool has_signal = has_data() && nyquist > 0.0;
@@ -10669,12 +10691,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g.side_filter_mode_label = mk_panel_ctl(L"STATIC", filter_mode_label_text(),
                                                     SS_LEFT | SS_NOPREFIX, 0, g.side_filter_controls);
             g.side_filter_mode = mk_panel_ctl(L"COMBOBOX", L"",
-                                              CBS_DROPDOWNLIST | CBS_HASSTRINGS | WS_VSCROLL | WS_BORDER,
+                                              CBS_DROPDOWNLIST | CBS_HASSTRINGS | WS_VSCROLL | WS_BORDER | WS_TABSTOP,
                                               IDC_SIDE_FILTER_MODE, g.side_filter_controls);
             g.side_filter_topology_label = mk_panel_ctl(L"STATIC", filter_topology_label_text(),
                                                         SS_LEFT | SS_NOPREFIX, 0, g.side_filter_controls);
             g.side_filter_topology = mk_panel_ctl(L"COMBOBOX", L"",
-                                                  CBS_DROPDOWNLIST | CBS_HASSTRINGS | WS_VSCROLL | WS_BORDER,
+                                                  CBS_DROPDOWNLIST | CBS_HASSTRINGS | WS_VSCROLL | WS_BORDER | WS_TABSTOP,
                                                   IDC_SIDE_FILTER_TOPOLOGY, g.side_filter_controls);
             g.side_filter_low_label = mk_panel_ctl(L"STATIC", filter_low_cutoff_text(),
                                                    SS_LEFT | SS_NOPREFIX, 0, g.side_filter_controls);
@@ -11458,6 +11480,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     return 0;
                 }
                 case IDC_SIDE_FILTER_MODE: {
+                    if (HIWORD(wp) == CBN_DROPDOWN) {
+                        expand_filter_combo_dropdown(GetDlgItem(hwnd, id));
+                        return 0;
+                    }
                     if (HIWORD(wp) == CBN_SELCHANGE && !g.updating_noise_threshold_edits) {
                         HWND combo = GetDlgItem(hwnd, id);
                         const int sel = static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0));
@@ -11479,6 +11505,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     return 0;
                 }
                 case IDC_SIDE_FILTER_TOPOLOGY: {
+                    if (HIWORD(wp) == CBN_DROPDOWN) {
+                        expand_filter_combo_dropdown(GetDlgItem(hwnd, id));
+                        return 0;
+                    }
                     if (HIWORD(wp) == CBN_SELCHANGE && !g.updating_noise_threshold_edits) {
                         HWND combo = GetDlgItem(hwnd, id);
                         const int sel = static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0));
